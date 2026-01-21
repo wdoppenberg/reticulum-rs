@@ -1,0 +1,7 @@
+README.md
+pyproject.toml
+reticulum_compat_tests.egg-info/PKG-INFO
+reticulum_compat_tests.egg-info/SOURCES.txt
+reticulum_compat_tests.egg-info/dependency_links.txt
+reticulum_compat_tests.egg-info/requires.txt
+reticulum_compat_tests.egg-info/top_level.txt

@@ -14,6 +14,12 @@ uv pip install -e ".[dev]"
 
 ## Running Tests
 
+### Quick Start - Interoperability Tests
+```bash
+# Run interoperability tests with automatic setup
+./run_interop_tests.sh
+```
+
 ### Basic Compatibility Tests
 ```bash
 # Run Python-only format tests
@@ -43,10 +49,23 @@ pytest test_formats.py::test_announce_format -v
 
 - `test_formats.py` - Tests for binary format compatibility (packets, identities, etc.)
 - `test_crypto.py` - Tests for cryptographic compatibility
-- `test_interop.py` - Tests for runtime interoperability (Rust ↔ Python communication)
-- `helpers.py` - Shared test utilities
-- `rust_binary.py` - Helper to run Rust test binaries
+- `test_interop.py` - **Tests for runtime interoperability (Rust ↔ Python communication)**
+  - Tests Rust server with Python client
+  - Tests Python server with Rust client
+  - Validates bidirectional network connectivity
+- `conftest.py` - Pytest fixtures and shared setup
+- `run_interop_tests.sh` - Convenience script to run interop tests
 
 ## Test Data
 
 Test vectors and expected values are generated from the Python reference implementation to ensure Rust matches exactly.
+
+## Interoperability Test Details
+
+The `test_interop.py` file contains two main test scenarios:
+
+1. **Rust Server + Python Client**: Starts a Rust Reticulum instance as a TCP server, then connects a Python RNS client to verify connectivity.
+
+2. **Python Server + Rust Client**: Starts a Python RNS instance as a TCP server, then connects a Rust Reticulum client to verify connectivity.
+
+These tests verify that both implementations can successfully establish network connections and communicate at the transport layer.

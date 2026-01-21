@@ -40,7 +40,7 @@ async fn main() -> Result<(), ReticulumError> {
 
     // Display identity information
     let identity = reticulum.identity();
-    log::info!("Network identity hash: {}", identity.hash());
+    log::info!("Network identity hash: {}", identity.address_hash());
 
     // Display interface configuration
     log::info!("Configured interfaces: {}", reticulum.config().interfaces.len());

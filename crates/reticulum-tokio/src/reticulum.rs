@@ -1,4 +1,6 @@
 use crate::config::{Config, ConfigError, InterfaceConfig};
+use crate::iface::tcp_client::TcpClient;
+use crate::iface::tcp_server::TcpServer;
 use crate::iface::InterfaceManager;
 use crate::transport::{Transport, TransportConfig};
 use reticulum_core::identity::PrivateIdentity;
@@ -284,7 +286,7 @@ impl Reticulum {
     async fn initialize_interfaces(&mut self) -> Result<(), ReticulumError> {
         log::debug!("Initializing interfaces");
 
-        let _iface_mgr = self.interface_manager.lock().await;
+        let mut iface_mgr = self.interface_manager.lock().await;
 
         for (name, iface_config) in &self.config.interfaces {
             match iface_config {
@@ -293,8 +295,25 @@ impl Reticulum {
                         log::debug!("Skipping disabled TCP interface '{}'", name);
                         continue;
                     }
-                    log::info!("Initializing TCP interface '{}' ({}:{})", name, tcp_config.address, tcp_config.port);
-                    // TODO: Initialize TCP interface
+
+                    let addr = format!("{}:{}", tcp_config.address, tcp_config.port);
+                    log::info!("Initializing TCP interface '{}' ({})", name, addr);
+
+                    match tcp_config.mode.as_str() {
+                        "server" => {
+                            let server = TcpServer::new(addr, self.interface_manager.clone());
+                            iface_mgr.spawn(server, TcpServer::spawn);
+                            log::info!("TCP server interface '{}' started", name);
+                        }
+                        "client" => {
+                            let client = TcpClient::new(addr);
+                            iface_mgr.spawn(client, TcpClient::spawn);
+                            log::info!("TCP client interface '{}' started", name);
+                        }
+                        mode => {
+                            log::warn!("Unknown TCP interface mode '{}' for interface '{}'", mode, name);
+                        }
+                    }
                 }
                 InterfaceConfig::Udp(udp_config) => {
                     if !udp_config.enabled {
