@@ -111,7 +111,7 @@ fn test_identity_hash_compat() {
     let ed25519_key = &pub_key_bytes[32..64];
 
     // Create Identity from the public keys
-    let identity = Identity::new_from_slices(x25519_key, ed25519_key);
+    let _identity = Identity::new_from_slices(x25519_key, ed25519_key);
 
     // Compute hash - should match Python's Identity.full_hash(pub_key)
     let identity_hash = Hash::new_from_slice(pub_key_bytes.as_slice());
@@ -168,7 +168,7 @@ fn test_destination_hash_compat() {
     let ed25519_key = &pub_key_bytes[32..64];
 
     // Create private identity (we only have public keys, but can still test name hash)
-    let identity_for_public = Identity::new_from_slices(x25519_key, ed25519_key);
+    let _identity_for_public = Identity::new_from_slices(x25519_key, ed25519_key);
 
     // Create destination name
     // Python uses app_name + "." + aspect1 + "." + aspect2

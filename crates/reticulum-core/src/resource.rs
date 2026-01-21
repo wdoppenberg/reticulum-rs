@@ -19,7 +19,7 @@ use crate::hash::Hash;
 
 /// Maximum size of a resource segment (in bytes)
 /// Capped at 16777215 (0xFFFFFF) per segment to fit in 3 bytes
-pub const MAX_EFFICIENT_SIZE: usize = 1 * 1024 * 1024 - 1;
+pub const MAX_EFFICIENT_SIZE: usize = 1024 * 1024 - 1;
 
 /// Maximum metadata size (in bytes) - 16MB
 pub const METADATA_MAX_SIZE: usize = 16 * 1024 * 1024 - 1;
@@ -106,8 +106,10 @@ pub const HASHMAP_IS_EXHAUSTED: u8 = 0xFF;
 /// Resource transfer status
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
+#[derive(Default)]
 pub enum ResourceStatus {
     /// No status / initial state
+    #[default]
     None = 0x00,
     /// Queued for transfer
     Queued = 0x01,
@@ -127,11 +129,6 @@ pub enum ResourceStatus {
     Corrupt = 0x08,
 }
 
-impl Default for ResourceStatus {
-    fn default() -> Self {
-        ResourceStatus::None
-    }
-}
 
 /// Resource flags for advertisement
 #[derive(Debug, Clone, Copy, Default)]
@@ -426,7 +423,7 @@ impl Resource {
         }
 
         let size = data.len();
-        let total_parts = (size + sdu - 1) / sdu; // Ceiling division
+        let total_parts = size.div_ceil(sdu); // Ceiling division
 
         #[cfg(feature = "alloc")]
         let hashmap = Vec::with_capacity(total_parts);
@@ -470,7 +467,7 @@ impl Resource {
     /// Create a new Resource for receiving data (from advertisement)
     #[cfg(feature = "alloc")]
     pub fn new_incoming(adv: &ResourceAdvertisement, sdu: usize) -> Self {
-        let total_parts = (adv.size + sdu - 1) / sdu;
+        let total_parts = adv.size.div_ceil(sdu);
 
         let mut hashmap = Vec::with_capacity(total_parts);
         for _ in 0..total_parts {
@@ -488,8 +485,8 @@ impl Resource {
             size: adv.size,
             total_size: adv.total_size,
             uncompressed_size: adv.uncompressed_size,
-            hash: adv.hash.clone(),
-            original_hash: adv.original_hash.clone(),
+            hash: adv.hash,
+            original_hash: adv.original_hash,
             random_hash: adv.random_hash,
             segment_index: adv.segment_index,
             total_segments: adv.total_segments,
@@ -743,8 +740,8 @@ mod tests {
         assert_eq!(byte, 0x01);
 
         let parsed = ResourceFlags::from_byte(byte);
-        assert_eq!(parsed.encrypted, true);
-        assert_eq!(parsed.compressed, false);
+        assert!(parsed.encrypted);
+        assert!(!parsed.compressed);
     }
 
     #[test]
@@ -756,7 +753,7 @@ mod tests {
 
         assert_eq!(resource.size, 1024);
         assert_eq!(resource.total_parts, 4);
-        assert_eq!(resource.initiator, true);
+        assert!(resource.initiator);
         assert_eq!(resource.window, WINDOW_INITIAL);
     }
 
@@ -891,7 +888,7 @@ mod tests {
         // Should have 2 missing parts (1 and 3)
         // But consecutive_completed_height advances, so part 2 might not be stored if part 1 wasn't received first
         // Let's just verify we have some missing parts
-        assert!(missing.len() >= 1, "Should have at least 1 missing part, got: {:?}", missing);
+        assert!(!missing.is_empty(), "Should have at least 1 missing part, got: {:?}", missing);
     }
 
     #[test]
@@ -916,8 +913,8 @@ mod tests {
         let packed = adv.pack();
         let unpacked = ResourceAdvertisement::unpack(&packed).unwrap();
 
-        assert_eq!(unpacked.flags.encrypted, true);
-        assert_eq!(unpacked.flags.compressed, false);
+        assert!(unpacked.flags.encrypted);
+        assert!(!unpacked.flags.compressed);
         assert_eq!(unpacked.size, 1024);
         assert_eq!(unpacked.segment_index, 1);
         assert_eq!(unpacked.total_segments, 1);

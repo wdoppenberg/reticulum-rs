@@ -32,6 +32,12 @@ pub struct LinkPayload {
     len: usize,
 }
 
+impl Default for LinkPayload {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LinkPayload {
     pub fn new() -> Self {
         Self {
@@ -86,9 +92,9 @@ impl From<&Packet> for LinkId {
 
         AddressHash::new_from_hash(&Hash::new(
             Hash::generator()
-                .chain_update(&[packet.header.to_meta() & 0b00001111])
+                .chain_update([packet.header.to_meta() & 0b00001111])
                 .chain_update(packet.destination.as_slice())
-                .chain_update(&[packet.context as u8])
+                .chain_update([packet.context as u8])
                 .chain_update(hashable_data)
                 .finalize()
                 .into(),

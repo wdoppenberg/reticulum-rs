@@ -70,11 +70,11 @@ async fn calculate_hop_distance() {
         .add_destination(id_a, DestinationName::new("test", "hop"))
         .await;
 
-    let dest_b = transport_b
+    let _dest_b = transport_b
         .add_destination(id_b, DestinationName::new("test", "hop"))
         .await;
 
-    let dest_c = transport_c
+    let _dest_c = transport_c
         .add_destination(id_c, DestinationName::new("test", "hop"))
         .await;
 
@@ -93,10 +93,10 @@ async fn calculate_hop_distance() {
 async fn direct_path_request_and_response() {
     setup();
 
-    let mut transport_a = build_transport("a", "127.0.0.1:8181", &[]).await;
+    let transport_a = build_transport("a", "127.0.0.1:8181", &[]).await;
     let mut transport_b = build_transport("b", "127.0.0.1:8182", &["127.0.0.1:8181"]).await;
 
-    let id_a = PrivateIdentity::new_from_name("a");
+    let _id_a = PrivateIdentity::new_from_name("a");
     let id_b = PrivateIdentity::new_from_name("b");
 
     let dest_b = transport_b
@@ -117,7 +117,7 @@ async fn direct_path_request_and_response() {
 async fn remote_path_request_and_response() {
     setup();
 
-    let mut transport_a = build_transport("a", "127.0.0.1:8281", &[]).await;
+    let transport_a = build_transport("a", "127.0.0.1:8281", &[]).await;
     let mut transport_b =
         build_transport_full("b", "127.0.0.1:8282", &["127.0.0.1:8281"], true).await;
     let mut transport_c = build_transport("c", "127.0.0.1:8283", &["127.0.0.1:8282"]).await;
@@ -132,7 +132,7 @@ async fn remote_path_request_and_response() {
     let dest_b = transport_b
         .add_destination(id_b, DestinationName::new("test", "hop"))
         .await;
-    let dest_b_hash = dest_b.lock().await.desc.address_hash;
+    let _dest_b_hash = dest_b.lock().await.desc.address_hash;
 
     time::sleep(Duration::from_secs(2)).await;
 

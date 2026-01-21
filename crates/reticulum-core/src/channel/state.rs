@@ -243,6 +243,12 @@ pub struct RxRing<const N: usize = MAX_ENVELOPE_SIZE> {
 }
 
 #[cfg(feature = "alloc")]
+impl<const N: usize> Default for RxRing<N> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<const N: usize> RxRing<N> {
     pub fn new() -> Self {
         Self {

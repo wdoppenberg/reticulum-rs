@@ -64,7 +64,7 @@ impl LinkTable {
         let entry = LinkEntry {
             timestamp: now,
             proof_timeout: now + Duration::from_secs(600), // TODO
-            next_hop: next_hop,
+            next_hop,
             next_hop_iface: iface,
             received_from,
             original_destination: destination,
@@ -78,7 +78,7 @@ impl LinkTable {
 
     pub fn original_destination(&self, link_id: &LinkId) -> Option<AddressHash> {
         self.0
-            .get(&link_id)
+            .get(link_id)
             .filter(|e| e.validated)
             .map(|e| e.original_destination)
     }
@@ -108,10 +108,8 @@ impl LinkTable {
         for (link_id, entry) in &self.0 {
             if entry.validated {
                 // TODO remove active timed out links
-            } else {
-                if entry.proof_timeout <= now {
-                    stale.push(link_id.clone());
-                }
+            } else if entry.proof_timeout <= now {
+                stale.push(*link_id);
             }
         }
 

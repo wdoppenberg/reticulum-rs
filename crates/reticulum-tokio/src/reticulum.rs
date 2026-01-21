@@ -70,7 +70,7 @@ pub mod constants {
     pub const TRUNCATED_HASHLENGTH: usize = 128;
 
     /// Minimum header size in bytes
-    pub const HEADER_MINSIZE: usize = 2 + 1 + (TRUNCATED_HASHLENGTH / 8) * 1;
+    pub const HEADER_MINSIZE: usize = 2 + 1 + (TRUNCATED_HASHLENGTH / 8);
 
     /// Maximum header size in bytes
     pub const HEADER_MAXSIZE: usize = 2 + 1 + (TRUNCATED_HASHLENGTH / 8) * 2;

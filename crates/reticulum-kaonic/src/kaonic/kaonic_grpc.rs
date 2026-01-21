@@ -192,14 +192,14 @@ impl KaonicGrpc {
                             Some(message) = tx_channel.recv() => {
                                 let packet = message.packet;
                                 let mut output = OutputBuffer::new(&mut tx_buffer);
-                                if let Ok(_) = packet.serialize(&mut output) {
+                                if packet.serialize(&mut output).is_ok() {
 
                                     let frame = encode_buffer_to_frame(output.as_mut_slice());
 
                                     let module = current_config.lock().await.module;
 
                                     let result = radio_client.transmit(proto::TransmitRequest{
-                                        module: module,
+                                        module,
                                         frame: Some(frame),
                                     }).await;
 
@@ -261,7 +261,7 @@ fn decode_frame_to_buffer<'a>(
     let mut index = 0usize;
     for word in &frame.data {
         for i in 0..4 {
-            buffer[index] = ((word >> i * 8) & 0xFF) as u8;
+            buffer[index] = ((word >> (i * 8)) & 0xFF) as u8;
 
             index += 1;
 

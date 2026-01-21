@@ -407,7 +407,7 @@ mod tests {
         // Base case: first try, 100ms RTT, empty tx ring
         let timeout = calculate_timeout(1, 100, 0);
         // Expected: 100 * 2.5 * 1.0 * 1.5 = 375ms
-        assert!(timeout >= 370 && timeout <= 380, "timeout = {}", timeout);
+        assert!((370..=380).contains(&timeout), "timeout = {}", timeout);
 
         // Retry case: timeout should increase with tries
         let timeout1 = calculate_timeout(1, 100, 0);
@@ -422,6 +422,6 @@ mod tests {
         // Minimum RTT enforced
         let timeout = calculate_timeout(1, 10, 0);
         // Expected: 25 * 2.5 * 1.0 * 1.5 = 93.75ms
-        assert!(timeout >= 90 && timeout <= 100, "timeout = {}", timeout);
+        assert!((90..=100).contains(&timeout), "timeout = {}", timeout);
     }
 }

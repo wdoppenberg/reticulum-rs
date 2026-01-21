@@ -11,11 +11,9 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
+use tokio::sync::{oneshot, Mutex, RwLock};
 
 use reticulum_core::{
-    hash::Hash,
-    identity::Identity,
     link::LinkId,
     request::{
         RequestContext, RequestData, RequestId, RequestPolicy, RequestStatus, ResponseData,
