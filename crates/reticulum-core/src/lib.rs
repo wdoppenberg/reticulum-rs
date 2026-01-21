@@ -12,5 +12,6 @@ pub mod hash;
 pub mod identity;
 pub mod link;
 pub mod packet;
+pub mod request;
 pub mod resource;
 pub mod serde;
