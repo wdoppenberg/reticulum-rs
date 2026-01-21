@@ -1,0 +1,10 @@
+{
+  "identity_hex": "785b72c545173a5a43e217f1322060aebe49d1ac08fefb217c8282056da46d22a65102189f42c2f23bffeef0604fd71e4f8327c302f3c55cea02189a9677201b",
+  "app_name": "test_app",
+  "aspects": [
+    "aspect1",
+    "aspect2"
+  ],
+  "destination_hash_hex": "8393e92017d796a86a3007c6f1c35480",
+  "name_hash_hex": "42fbe60f9a86315875fe"
+}

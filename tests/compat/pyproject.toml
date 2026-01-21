@@ -1,0 +1,14 @@
+[project]
+name = "reticulum-compat-tests"
+version = "0.1.0"
+description = "Compatibility tests between Rust and Python Reticulum implementations"
+requires-python = ">=3.8"
+dependencies = [
+    "rns>=0.7.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+]

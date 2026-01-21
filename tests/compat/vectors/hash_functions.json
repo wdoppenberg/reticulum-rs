@@ -1,0 +1,7 @@
+{
+  "input_hex": "74657374206461746120666f722068617368696e67",
+  "full_hash_hex": "f7eb7961d8a233e6256d3a6257548bbb9293c3a08fb3574c88c7d6b429dbb9f5",
+  "truncated_hash_hex": "f7eb7961d8a233e6256d3a6257548bbb",
+  "full_hash_length": 32,
+  "truncated_hash_length": 16
+}
