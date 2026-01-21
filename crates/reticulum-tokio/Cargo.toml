@@ -1,0 +1,39 @@
+[package]
+name = "reticulum-tokio"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/BeechatNetworkSystemsLtd/Reticulum-rs"
+categories = ["network-programming", "asynchronous"]
+keywords = ["reticulum", "mesh", "async", "tokio", "networking"]
+
+description = """
+Tokio-based async runtime implementation for the Reticulum Network Stack.
+Provides transport layer, interface management, and routing for network nodes.
+"""
+
+[dependencies]
+# Core protocol implementation
+reticulum-core = { path = "../reticulum-core", version = "0.1.0" }
+
+# Async runtime
+tokio = { version = "1.44.2", features = ["full"] }
+tokio-stream = "0.1.17"
+tokio-util = "0.7.15"
+
+# Serialization
+rmp = "0.8.14"
+serde = { version = "1.0.219", features = ["derive"] }
+
+# Crypto (for runtime-specific needs)
+rand_core = { version = "0.6.4", features = ["getrandom"] }
+
+# Logging
+log = "0.4.27"
+env_logger = "0.10"
+ed25519-dalek = "2.2.0"
+sha2 = "0.10.9"
+x25519-dalek = "2.0.1"
+
+[dev-dependencies]
+tokio = { version = "1.44.2", features = ["test-util"] }
