@@ -1,0 +1,119 @@
+# Reticulum Network Stack Configuration Example
+# This is a sample configuration file demonstrating all available options
+
+[reticulum]
+# Share this instance with other local processes
+# When enabled, other Reticulum programs on the same system can
+# connect to this instance via a local socket
+share_instance = true
+
+# Optional instance name for Unix socket (Unix systems only)
+# instance_name = "my_instance"
+
+# Port for shared instance communication
+shared_instance_port = 37428
+
+# Port for instance control/RPC
+instance_control_port = 37429
+
+# Optional RPC authentication key (hex string)
+# If not set, a key will be auto-generated
+# rpc_key = "0123456789abcdef..."
+
+# Enable transport/routing functionality
+# When enabled, this node can route packets for other nodes
+enable_transport = false
+
+# Optional path to persistent network identity
+# If not set, an ephemeral identity is used
+# network_identity = "storage/identities/network"
+
+# Enable automatic link MTU discovery
+# Improves throughput over fast links
+link_mtu_discovery = true
+
+# Use implicit proofs
+# Reduces bandwidth usage
+use_implicit_proof = true
+
+# Allow network probes
+allow_probes = false
+
+# Enable discovery features
+enable_discovery = false
+
+# Auto-discover network interfaces
+discover_interfaces = false
+
+# Auto-connect to discovered interfaces
+autoconnect_discovered_interfaces = false
+
+# Panic on interface errors
+# Useful for debugging, should be false in production
+panic_on_interface_error = false
+
+[logging]
+# Log level (0-7, where 7 is most verbose)
+# 0 = Critical, 1 = Error, 2 = Warning, 3 = Notice
+# 4 = Info, 5 = Verbose, 6 = Debug, 7 = Extreme
+loglevel = 4
+
+# Example TCP Server Interface
+# Listen for incoming connections
+[interfaces.tcp_server]
+type = "tcp"
+enabled = true
+mode = "server"
+address = "0.0.0.0"
+port = 4242
+outbound = true
+# Optional: bitrate = 1000000
+
+# Example TCP Client Interface
+# Connect to a remote Reticulum node
+[interfaces.tcp_client]
+type = "tcp"
+enabled = false
+mode = "client"
+address = "127.0.0.1"
+port = 4242
+outbound = true
+
+# Example UDP Interface
+# Broadcast on local network
+[interfaces.udp_local]
+type = "udp"
+enabled = false
+address = "0.0.0.0"
+port = 4243
+forward_broadcasts = true
+outbound = true
+
+# Example Auto Interface
+# Automatic local network discovery
+# [interfaces.auto_local]
+# type = "auto"
+# enabled = false
+# group = "224.0.0.1"
+# discovery_port = 4244
+# data_port = 4245
+
+# Example Serial Interface
+# For connecting via serial port (e.g., to radio modems)
+# [interfaces.serial_radio]
+# type = "serial"
+# enabled = false
+# port = "/dev/ttyUSB0"
+# baud_rate = 115200
+# data_bits = 8
+# stop_bits = 1
+# parity = "None"
+
+# Example I2P Interface
+# For anonymous networking via I2P
+# [interfaces.i2p_hidden]
+# type = "i2p"
+# enabled = false
+# sam_host = "127.0.0.1"
+# sam_port = 7656
+# destination = ""  # Leave empty to generate new
