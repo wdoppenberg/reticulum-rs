@@ -3,7 +3,7 @@ name = "reticulum-core"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-repository = "https://github.com/BeechatNetworkSystemsLtd/Reticulum-rs"
+repository = "https://github.com/wdoppenberg/reticulum-rs"
 categories = ["network-programming", "no-std", "embedded"]
 keywords = ["reticulum", "mesh", "crypto", "no-std", "embedded"]
 

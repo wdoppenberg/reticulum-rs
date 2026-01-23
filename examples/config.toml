@@ -60,43 +60,40 @@ loglevel = 4
 
 # Example TCP Server Interface
 # Listen for incoming connections
-[interfaces.tcp_server]
-type = "tcp"
-enabled = true
-mode = "server"
-address = "0.0.0.0"
-port = 4242
-outbound = true
-# Optional: bitrate = 1000000
-
-# Example TCP Client Interface
-# Connect to a remote Reticulum node
-[interfaces.tcp_client]
-type = "tcp"
-enabled = false
-mode = "client"
-address = "127.0.0.1"
-port = 4242
-outbound = true
-
-# Example UDP Interface
-# Broadcast on local network
-[interfaces.udp_local]
-type = "udp"
-enabled = false
-address = "0.0.0.0"
-port = 4243
-forward_broadcasts = true
-outbound = true
+#[interfaces.tcp_server]
+#type = "tcp"
+#enabled = true
+#mode = "server"
+#address = "0.0.0.0"
+#port = 4242
+#outbound = true
+## Optional: bitrate = 1000000
+#
+## Example TCP Client Interface
+## Connect to a remote Reticulum node
+#[interfaces.tcp_client]
+#type = "tcp"
+#enabled = false
+#mode = "client"
+#address = "127.0.0.1"
+#port = 4242
+#outbound = true
+#
+## Example UDP Interface
+## Broadcast on local network
+#[interfaces.udp_local]
+#type = "udp"
+#enabled = false
+#address = "0.0.0.0"
+#port = 4243
+#forward_broadcasts = true
+#outbound = true
 
 # Example Auto Interface
 # Automatic local network discovery
-# [interfaces.auto_local]
-# type = "auto"
-# enabled = false
-# group = "224.0.0.1"
-# discovery_port = 4244
-# data_port = 4245
+[interfaces.auto]
+type = "auto"
+enabled = false
 
 # Example Serial Interface
 # For connecting via serial port (e.g., to radio modems)

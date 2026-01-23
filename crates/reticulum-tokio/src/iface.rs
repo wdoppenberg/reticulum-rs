@@ -1,4 +1,7 @@
+pub mod auto;
 pub mod hdlc;
+pub mod i2p;
+pub mod serial;
 pub mod tcp_client;
 pub mod tcp_server;
 pub mod udp;

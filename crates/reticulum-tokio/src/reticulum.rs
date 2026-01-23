@@ -1,6 +1,10 @@
 use crate::config::{Config, ConfigError, InterfaceConfig};
+use crate::iface::auto::AutoInterface;
+use crate::iface::i2p::I2PInterface;
+use crate::iface::serial::SerialInterface;
 use crate::iface::tcp_client::TcpClient;
 use crate::iface::tcp_server::TcpServer;
+use crate::iface::udp::UdpInterface;
 use crate::iface::InterfaceManager;
 use crate::transport::{Transport, TransportConfig};
 use reticulum_core::identity::PrivateIdentity;
@@ -120,7 +124,7 @@ impl ReticulumPaths {
     pub fn from_config_dir<P: AsRef<Path>>(config_dir: P) -> Self {
         let config_dir = config_dir.as_ref().to_path_buf();
         Self {
-            config_path: config_dir.join("config"),
+            config_path: config_dir.join("config.toml"),
             storage_path: config_dir.join("storage"),
             cache_path: config_dir.join("storage").join("cache"),
             resource_path: config_dir.join("storage").join("resources"),
@@ -138,12 +142,12 @@ impl ReticulumPaths {
             let home_path = PathBuf::from(&home).join(".reticulum");
 
             // Check /etc/reticulum first
-            if etc_path.join("config").exists() {
+            if etc_path.join("config.toml").exists() {
                 return etc_path;
             }
 
             // Check ~/.config/reticulum
-            if xdg_path.join("config").exists() {
+            if xdg_path.join("config.toml").exists() {
                 return xdg_path;
             }
 
@@ -320,8 +324,20 @@ impl Reticulum {
                         log::debug!("Skipping disabled UDP interface '{}'", name);
                         continue;
                     }
-                    log::info!("Initializing UDP interface '{}' ({}:{})", name, udp_config.address, udp_config.port);
-                    // TODO: Initialize UDP interface
+
+                    let bind_addr = format!("{}:{}", udp_config.address, udp_config.port);
+                    log::info!("Initializing UDP interface '{}' ({})", name, bind_addr);
+
+                    // UDP interface can optionally forward to a specific address
+                    let forward_addr = if udp_config.forward_broadcasts {
+                        Some(bind_addr.clone())
+                    } else {
+                        None
+                    };
+
+                    let udp_iface = UdpInterface::new(bind_addr, forward_addr);
+                    iface_mgr.spawn(udp_iface, UdpInterface::spawn);
+                    log::info!("UDP interface '{}' started", name);
                 }
                 InterfaceConfig::Auto(auto_config) => {
                     if !auto_config.enabled {
@@ -329,7 +345,14 @@ impl Reticulum {
                         continue;
                     }
                     log::info!("Initializing Auto interface '{}'", name);
-                    // TODO: Initialize Auto interface
+
+                    let auto_iface = AutoInterface::new(
+                        auto_config.group.clone(),
+                        auto_config.discovery_port,
+                        auto_config.data_port,
+                    );
+                    iface_mgr.spawn(auto_iface, AutoInterface::spawn);
+                    log::info!("Auto interface '{}' started", name);
                 }
                 InterfaceConfig::Serial(serial_config) => {
                     if !serial_config.enabled {
@@ -337,7 +360,16 @@ impl Reticulum {
                         continue;
                     }
                     log::info!("Initializing Serial interface '{}' ({})", name, serial_config.port);
-                    // TODO: Initialize Serial interface
+
+                    let serial_iface = SerialInterface::new(
+                        serial_config.port.clone(),
+                        serial_config.baud_rate,
+                        serial_config.data_bits,
+                        serial_config.parity.clone(),
+                        serial_config.stop_bits,
+                    );
+                    iface_mgr.spawn(serial_iface, SerialInterface::spawn);
+                    log::info!("Serial interface '{}' started", name);
                 }
                 InterfaceConfig::I2P(i2p_config) => {
                     if !i2p_config.enabled {
@@ -345,7 +377,14 @@ impl Reticulum {
                         continue;
                     }
                     log::info!("Initializing I2P interface '{}'", name);
-                    // TODO: Initialize I2P interface
+
+                    let i2p_iface = I2PInterface::new(
+                        i2p_config.sam_host.clone(),
+                        i2p_config.sam_port,
+                        i2p_config.destination.clone(),
+                    );
+                    iface_mgr.spawn(i2p_iface, I2PInterface::spawn);
+                    log::info!("I2P interface '{}' started", name);
                 }
             }
         }
@@ -404,7 +443,7 @@ mod tests {
         let paths = ReticulumPaths::from_config_dir("/tmp/test_reticulum");
         assert_eq!(
             paths.config_path,
-            PathBuf::from("/tmp/test_reticulum/config")
+            PathBuf::from("/tmp/test_reticulum/config.toml")
         );
         assert_eq!(
             paths.storage_path,

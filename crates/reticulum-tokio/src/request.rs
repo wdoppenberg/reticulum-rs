@@ -269,6 +269,7 @@ impl Default for RequestHandlerRegistry {
 mod tests {
     use super::*;
     use reticulum_core::hash::AddressHash;
+    use reticulum_core::identity::Identity;
 
     #[tokio::test]
     async fn test_request_manager_create_request() {
