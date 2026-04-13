@@ -124,6 +124,10 @@ impl AddressHash {
         self.0.len()
     }
 
+    pub const fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn to_hex_string(&self) -> String {
         let mut hex_string = String::with_capacity(ADDRESS_HASH_SIZE * 2);
 

@@ -28,7 +28,7 @@ use reticulum_core::resource::{
     Resource, ResourceAdvertisement, ResourcePart, ResourceStatus, MAPHASH_LEN,
 };
 
-use crate::link::{Link, LinkEvent, LinkEventData, LinkId};
+use crate::link::{DataKind, Link, LinkDataEventData, LinkEvent, LinkEventData, LinkId};
 use crate::transport::Transport;
 
 /// Timeout for waiting on a hash-update or proof from the receiver.
@@ -73,6 +73,7 @@ pub async fn send_resource(
     link: Arc<Mutex<Link>>,
     transport: Arc<Transport>,
     mut event_rx: broadcast::Receiver<LinkEventData>,
+    mut data_rx: broadcast::Receiver<Arc<LinkDataEventData>>,
     cancel: CancellationToken,
 ) -> Result<(), ResourceError> {
     let link_id = *link.lock().await.id();
@@ -113,7 +114,7 @@ pub async fn send_resource(
         .map_err(|e| ResourceError::Advertisement(format!("{:?}", e)))?;
 
     transport.send_packet(adv_packet).await;
-    resource.status = ResourceStatus::Advertised;
+    resource.set_status(ResourceStatus::Advertised);
 
     log::debug!(
         "resource_sender({}): advertised {} bytes, {} parts",
@@ -123,7 +124,7 @@ pub async fn send_resource(
     );
 
     // Send the initial window of parts.
-    resource.status = ResourceStatus::Transferring;
+    resource.set_status(ResourceStatus::Transferring);
     send_window(&mut resource, &parts, &link, &transport, link_id).await?;
 
     let mut last_activity = Instant::now();
@@ -137,62 +138,73 @@ pub async fn send_resource(
                 PacketContext::ResourceInitiatorCancel,
             )
             .await;
-            resource.status = ResourceStatus::Failed;
+            resource.set_status(ResourceStatus::Failed);
             return Err(ResourceError::Cancelled);
         }
 
         if last_activity.elapsed() > RECEIVER_RESPONSE_TIMEOUT {
             log::warn!("resource_sender({}): receiver response timeout", link_id);
-            resource.status = ResourceStatus::Failed;
+            resource.set_status(ResourceStatus::Failed);
             return Err(ResourceError::Timeout);
         }
 
-        let event_result = tokio::time::timeout(POLL_TIMEOUT, event_rx.recv()).await;
-
-        match event_result {
-            Err(_) => continue, // poll timeout, check cancel/global timeout
-            Ok(Err(_)) => {
-                resource.status = ResourceStatus::Failed;
-                return Err(ResourceError::LinkClosed);
-            }
-            Ok(Ok(ev)) => {
-                if ev.id != link_id {
-                    continue;
-                }
-                match ev.event {
-                    LinkEvent::ResourceData(payload, PacketContext::ResourceHashUpdate) => {
-                        last_activity = Instant::now();
-                        handle_hash_update_sender(
-                            &mut resource,
-                            &parts,
-                            payload.as_slice(),
-                            &link,
-                            &transport,
-                            link_id,
-                        )
-                        .await;
-                        if resource.is_complete() {
-                            break;
+        tokio::select! {
+            _ = tokio::time::sleep(POLL_TIMEOUT) => continue, // re-check cancel/global timeout
+            result = event_rx.recv() => {
+                match result {
+                    Ok(ev) if ev.id == link_id => {
+                        if let LinkEvent::Closed = ev.event {
+                            resource.set_status(ResourceStatus::Failed);
+                            return Err(ResourceError::LinkClosed);
                         }
                     }
-                    LinkEvent::ResourceData(_, PacketContext::ResourceProof) => {
-                        log::debug!(
-                            "resource_sender({}): proof received, transfer complete",
-                            link_id
-                        );
-                        resource.status = ResourceStatus::Complete;
-                        return Ok(());
-                    }
-                    LinkEvent::ResourceData(_, PacketContext::ResourceReceiverCancel) => {
-                        log::info!("resource_sender({}): receiver cancelled", link_id);
-                        resource.status = ResourceStatus::Failed;
-                        return Err(ResourceError::Cancelled);
-                    }
-                    LinkEvent::Closed => {
-                        resource.status = ResourceStatus::Failed;
+                    Ok(_) => {}
+                    Err(_) => {
+                        resource.set_status(ResourceStatus::Failed);
                         return Err(ResourceError::LinkClosed);
                     }
-                    _ => {}
+                }
+            }
+            result = data_rx.recv() => {
+                match result {
+                    Ok(fd) if fd.id == link_id && fd.frame.kind == DataKind::ResourceData => {
+                        match fd.frame.context {
+                            PacketContext::ResourceHashUpdate => {
+                                last_activity = Instant::now();
+                                handle_hash_update_sender(
+                                    &mut resource,
+                                    &parts,
+                                    fd.frame.payload.as_slice(),
+                                    &link,
+                                    &transport,
+                                    link_id,
+                                )
+                                .await;
+                                if resource.is_complete() {
+                                    break;
+                                }
+                            }
+                            PacketContext::ResourceProof => {
+                                log::debug!(
+                                    "resource_sender({}): proof received, transfer complete",
+                                    link_id
+                                );
+                                resource.set_status(ResourceStatus::Complete);
+                                return Ok(());
+                            }
+                            PacketContext::ResourceReceiverCancel => {
+                                log::info!("resource_sender({}): receiver cancelled", link_id);
+                                resource.set_status(ResourceStatus::Failed);
+                                return Err(ResourceError::Cancelled);
+                            }
+                            _ => {}
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(_) => {
+                        resource.set_status(ResourceStatus::Failed);
+                        return Err(ResourceError::LinkClosed);
+                    }
                 }
             }
         }
@@ -347,9 +359,13 @@ impl ResourceReceiver {
     }
 
     /// Drive the receive protocol to completion, returning the assembled data.
+    ///
+    /// `event_rx` carries control events (Activated, Closed).
+    /// `data_rx` carries data frames (Arc-wrapped for zero payload copies).
     pub async fn wait(
         mut self,
         mut event_rx: broadcast::Receiver<LinkEventData>,
+        mut data_rx: broadcast::Receiver<Arc<LinkDataEventData>>,
     ) -> Result<Vec<u8>, ResourceError> {
         let mut last_activity = Instant::now();
 
@@ -364,45 +380,53 @@ impl ResourceReceiver {
                 return Err(ResourceError::Timeout);
             }
 
-            let event_result = tokio::time::timeout(POLL_TIMEOUT, event_rx.recv()).await;
-
-            match event_result {
-                Err(_) => continue,
-                Ok(Err(_)) => return Err(ResourceError::LinkClosed),
-                Ok(Ok(ev)) => {
-                    if ev.id != self.link_id {
-                        continue;
-                    }
-                    match ev.event {
-                        LinkEvent::ResourceData(payload, PacketContext::Resource) => {
-                            last_activity = Instant::now();
-                            match self.resource.receive_part(payload.as_slice().to_vec()) {
-                                Ok(complete) => {
-                                    if complete {
-                                        return self.finish().await;
-                                    }
-                                    if self.resource.outstanding_parts == 0 {
-                                        self.send_hash_update().await;
-                                    }
-                                }
-                                Err(e) => {
-                                    log::warn!(
-                                        "resource_receiver({}): receive_part: {}",
-                                        self.link_id,
-                                        e
-                                    );
-                                    self.send_hash_update().await;
-                                }
+            tokio::select! {
+                _ = tokio::time::sleep(POLL_TIMEOUT) => continue, // re-check cancel/global timeout
+                result = event_rx.recv() => {
+                    match result {
+                        Ok(ev) if ev.id == self.link_id => {
+                            if let LinkEvent::Closed = ev.event {
+                                return Err(ResourceError::LinkClosed);
                             }
                         }
-                        LinkEvent::ResourceData(_, PacketContext::ResourceInitiatorCancel) => {
-                            log::info!("resource_receiver({}): initiator cancelled", self.link_id);
-                            return Err(ResourceError::Cancelled);
+                        Ok(_) => {}
+                        Err(_) => return Err(ResourceError::LinkClosed),
+                    }
+                }
+                result = data_rx.recv() => {
+                    match result {
+                        Ok(fd) if fd.id == self.link_id && fd.frame.kind == DataKind::ResourceData => {
+                            match fd.frame.context {
+                                PacketContext::Resource => {
+                                    last_activity = Instant::now();
+                                    match self.resource.receive_part(fd.frame.payload.as_slice().to_vec()) {
+                                        Ok(complete) => {
+                                            if complete {
+                                                return self.finish().await;
+                                            }
+                                            if self.resource.outstanding_parts == 0 {
+                                                self.send_hash_update().await;
+                                            }
+                                        }
+                                        Err(e) => {
+                                            log::warn!(
+                                                "resource_receiver({}): receive_part: {}",
+                                                self.link_id,
+                                                e
+                                            );
+                                            self.send_hash_update().await;
+                                        }
+                                    }
+                                }
+                                PacketContext::ResourceInitiatorCancel => {
+                                    log::info!("resource_receiver({}): initiator cancelled", self.link_id);
+                                    return Err(ResourceError::Cancelled);
+                                }
+                                _ => {}
+                            }
                         }
-                        LinkEvent::Closed => {
-                            return Err(ResourceError::LinkClosed);
-                        }
-                        _ => {}
+                        Ok(_) => {}
+                        Err(_) => return Err(ResourceError::LinkClosed),
                     }
                 }
             }

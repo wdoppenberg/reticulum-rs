@@ -141,6 +141,7 @@ impl Identity {
         self.verifying_key.as_bytes()
     }
 
+    #[must_use = "a verification failure must be handled"]
     pub fn verify(&self, data: &[u8], signature: &Signature) -> Result<(), RnsError> {
         self.verifying_key
             .verify_strict(data, signature)

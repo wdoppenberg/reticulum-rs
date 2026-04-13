@@ -3,6 +3,7 @@ use core::fmt;
 use sha2::Digest;
 
 use crate::buffer::StaticBuffer;
+use crate::error::RnsError;
 use crate::hash::AddressHash;
 use crate::hash::Hash;
 
@@ -10,6 +11,7 @@ pub use crate::identity::PUBLIC_KEY_LENGTH;
 
 pub const PACKET_MDU: usize = 2048usize;
 pub const PACKET_IFAC_MAX_LENGTH: usize = 64usize;
+pub const RETICULUM_MTU: usize = 500usize;
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub enum IfacFlag {
@@ -180,6 +182,7 @@ impl Default for Header {
 }
 
 impl Header {
+    #[must_use]
     pub fn to_meta(&self) -> u8 {
         (self.ifac_flag as u8) << 7
             | (self.header_type as u8) << 6
@@ -224,12 +227,30 @@ pub struct PacketIfac {
 }
 
 impl PacketIfac {
-    pub fn new_from_slice(slice: &[u8]) -> Self {
+    pub fn try_new_from_slice(slice: &[u8]) -> Result<Self, RnsError> {
+        if slice.is_empty() || slice.len() > PACKET_IFAC_MAX_LENGTH {
+            return Err(RnsError::InvalidArgument);
+        }
+
         let mut access_code = [0u8; PACKET_IFAC_MAX_LENGTH];
         access_code[..slice.len()].copy_from_slice(slice);
-        Self {
+        Ok(Self {
             access_code,
             length: slice.len(),
+        })
+    }
+
+    pub fn new_from_slice(slice: &[u8]) -> Self {
+        debug_assert!(
+            !slice.is_empty() && slice.len() <= PACKET_IFAC_MAX_LENGTH,
+            "PacketIfac::new_from_slice expects 1..=PACKET_IFAC_MAX_LENGTH bytes"
+        );
+        let mut access_code = [0u8; PACKET_IFAC_MAX_LENGTH];
+        let length = core::cmp::min(slice.len(), PACKET_IFAC_MAX_LENGTH);
+        access_code[..length].copy_from_slice(&slice[..length]);
+        Self {
+            access_code,
+            length,
         }
     }
 
@@ -249,6 +270,30 @@ pub struct Packet {
 }
 
 impl Packet {
+    pub fn wire_size_hint(&self) -> Result<usize, RnsError> {
+        let mut size = 2usize; // header meta + hops
+
+        if self.header.ifac_flag == IfacFlag::Authenticated {
+            let ifac = self.ifac.ok_or(RnsError::InvalidArgument)?;
+            if ifac.length == 0 || ifac.length > PACKET_IFAC_MAX_LENGTH {
+                return Err(RnsError::InvalidArgument);
+            }
+            size += 1 + ifac.length; // length prefix + IFAC bytes
+        } else if self.ifac.is_some() {
+            return Err(RnsError::InvalidArgument);
+        }
+
+        if self.header.header_type == HeaderType::Type2 {
+            size += AddressHash::new_empty().len();
+        }
+
+        size += AddressHash::new_empty().len(); // destination
+        size += 1; // context
+        size += self.data.len();
+
+        Ok(size)
+    }
+
     pub fn hash(&self) -> Hash {
         Hash::new(
             Hash::generator()

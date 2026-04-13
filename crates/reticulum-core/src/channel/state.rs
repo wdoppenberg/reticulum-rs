@@ -68,6 +68,28 @@ impl<const N: usize> TxMessageEntry<N> {
         self.timeout_ms = calculate_timeout(self.tries, rtt_ms, tx_ring_size);
     }
 
+    /// Mark as delivered.  Private: only `TxRing::acknowledge` may call this,
+    /// ensuring `Delivered` is only reached from `Sent`.
+    fn mark_delivered(&mut self) {
+        debug_assert_eq!(
+            self.state,
+            MessageState::Sent,
+            "mark_delivered called on a message that was not Sent"
+        );
+        self.state = MessageState::Delivered;
+    }
+
+    /// Mark as permanently failed.  Private: only `TxRing::check_failures` may
+    /// call this, ensuring `Failed` is only reached after retry exhaustion.
+    fn mark_failed(&mut self) {
+        debug_assert_eq!(
+            self.state,
+            MessageState::Sent,
+            "mark_failed called on a message that was not Sent"
+        );
+        self.state = MessageState::Failed;
+    }
+
     /// Check if retry limit exceeded
     pub fn can_retry(&self) -> bool {
         self.tries < MAX_RETRIES
@@ -165,9 +187,9 @@ impl<const N: usize> TxRing<N> {
 
     /// Acknowledge a message by sequence number
     pub fn acknowledge(&mut self, seq: SequenceNumber) -> bool {
-        // Find and mark the message as delivered
+        // Find and mark the message as delivered via the controlled transition.
         if let Some(entry) = self.ring.iter_mut().find(|e| e.envelope.sequence == seq) {
-            entry.state = MessageState::Delivered;
+            entry.mark_delivered();
 
             // Remove all delivered messages from the front
             while let Some(front) = self.ring.front() {
@@ -194,7 +216,7 @@ impl<const N: usize> TxRing<N> {
                 && entry.is_timed_out(current_time_ms)
                 && !entry.can_retry()
             {
-                entry.state = MessageState::Failed;
+                entry.mark_failed();
                 failed = true;
             }
         }
@@ -368,6 +390,10 @@ mod tests {
 
         assert_eq!(tx_ring.len(), 2);
 
+        // Messages must be marked sent before they can be acknowledged (protocol flow)
+        tx_ring.get_mut(seq0).unwrap().mark_sent(0, 100, 2);
+        tx_ring.get_mut(seq1).unwrap().mark_sent(0, 100, 2);
+
         // Acknowledge first message
         assert!(tx_ring.acknowledge(seq0));
         assert_eq!(tx_ring.len(), 1);
@@ -383,8 +409,9 @@ mod tests {
 
         let initial_window = tx_ring.window_size();
 
-        // Push and acknowledge a message
+        // Push, mark sent, then acknowledge (protocol order)
         let seq = tx_ring.push(MessageType::new(1), b"test").expect("push");
+        tx_ring.get_mut(seq).unwrap().mark_sent(0, 100, 1);
         tx_ring.acknowledge(seq);
 
         // Window should increase

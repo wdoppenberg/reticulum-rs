@@ -18,6 +18,7 @@ use tokio::sync::Mutex;
 use tokio::sync::MutexGuard;
 
 use crate::link::Link;
+use crate::link::LinkDataEventData;
 use crate::link::LinkEventData;
 use crate::link::LinkHandleResult;
 use crate::link::LinkId;
@@ -92,7 +93,7 @@ pub struct AnnounceEvent {
     pub app_data: PacketDataBuffer,
 }
 
-struct TransportHandler {
+pub struct TransportHandler {
     config: TransportConfig,
     iface_manager: Arc<Mutex<InterfaceManager>>,
     announce_tx: broadcast::Sender<AnnounceEvent>,
@@ -113,6 +114,7 @@ struct TransportHandler {
     path_requests: PathRequests,
 
     link_in_event_tx: broadcast::Sender<LinkEventData>,
+    link_in_data_tx: broadcast::Sender<Arc<LinkDataEventData>>,
     received_data_tx: broadcast::Sender<ReceivedData>,
 
     fixed_dest_path_requests: AddressHash,
@@ -124,6 +126,8 @@ pub struct Transport {
     name: String,
     link_in_event_tx: broadcast::Sender<LinkEventData>,
     link_out_event_tx: broadcast::Sender<LinkEventData>,
+    link_in_data_tx: broadcast::Sender<Arc<LinkDataEventData>>,
+    link_out_data_tx: broadcast::Sender<Arc<LinkDataEventData>>,
     received_data_tx: broadcast::Sender<ReceivedData>,
     iface_messages_tx: broadcast::Sender<RxMessage>,
     handler: Arc<Mutex<TransportHandler>>,
@@ -165,6 +169,8 @@ impl Transport {
         let (announce_tx, _) = tokio::sync::broadcast::channel(16);
         let (link_in_event_tx, _) = tokio::sync::broadcast::channel(16);
         let (link_out_event_tx, _) = tokio::sync::broadcast::channel(16);
+        let (link_in_data_tx, _) = tokio::sync::broadcast::channel(16);
+        let (link_out_data_tx, _) = tokio::sync::broadcast::channel(16);
         let (received_data_tx, _) = tokio::sync::broadcast::channel(16);
         let (iface_messages_tx, _) = tokio::sync::broadcast::channel(16);
 
@@ -200,6 +206,7 @@ impl Transport {
             path_requests,
             announce_tx,
             link_in_event_tx: link_in_event_tx.clone(),
+            link_in_data_tx: link_in_data_tx.clone(),
             received_data_tx: received_data_tx.clone(),
             fixed_dest_path_requests: path_request_dest,
             cancel: cancel.clone(),
@@ -219,6 +226,8 @@ impl Transport {
             iface_manager,
             link_in_event_tx,
             link_out_event_tx,
+            link_in_data_tx,
+            link_out_data_tx,
             received_data_tx,
             iface_messages_tx,
             handler,
@@ -245,15 +254,27 @@ impl Transport {
         self.iface_messages_tx.subscribe()
     }
 
-    /// Subscribe to all link events (activated, data, channel data, resource
-    /// data, closed) for both inbound and outbound links.
+    /// Subscribe to inbound link control events (Activated, Closed).
     pub fn subscribe_link_events(&self) -> broadcast::Receiver<crate::link::LinkEventData> {
         self.link_in_event_tx.subscribe()
     }
 
-    /// Subscribe to outbound (client-side) link events.
+    /// Subscribe to outbound (client-side) link control events (Activated, Closed).
     pub fn subscribe_out_link_events(&self) -> broadcast::Receiver<crate::link::LinkEventData> {
         self.link_out_event_tx.subscribe()
+    }
+
+    /// Subscribe to inbound link data frames.  Each `Arc` clone costs only a
+    /// pointer copy — the payload bytes are never duplicated per subscriber.
+    pub fn subscribe_link_data(&self) -> broadcast::Receiver<Arc<crate::link::LinkDataEventData>> {
+        self.link_in_data_tx.subscribe()
+    }
+
+    /// Subscribe to outbound link data frames.
+    pub fn subscribe_out_link_data(
+        &self,
+    ) -> broadcast::Receiver<Arc<crate::link::LinkDataEventData>> {
+        self.link_out_data_tx.subscribe()
     }
 
     pub async fn recv_announces(&self) -> broadcast::Receiver<AnnounceEvent> {
@@ -393,7 +414,11 @@ impl Transport {
             }
         }
 
-        let mut link = Link::new(destination, self.link_out_event_tx.clone());
+        let mut link = Link::new(
+            destination,
+            self.link_out_event_tx.clone(),
+            self.link_out_data_tx.clone(),
+        );
 
         let packet = link.request();
 
@@ -436,6 +461,14 @@ impl Transport {
 
     pub fn in_link_events(&self) -> broadcast::Receiver<LinkEventData> {
         self.link_in_event_tx.subscribe()
+    }
+
+    pub fn out_link_data(&self) -> broadcast::Receiver<Arc<LinkDataEventData>> {
+        self.link_out_data_tx.subscribe()
+    }
+
+    pub fn in_link_data(&self) -> broadcast::Receiver<Arc<LinkDataEventData>> {
+        self.link_in_data_tx.subscribe()
     }
 
     pub fn received_data_events(&self) -> broadcast::Receiver<ReceivedData> {
@@ -561,8 +594,9 @@ async fn handle_proof<'a>(packet: &Packet, mut handler: MutexGuard<'a, Transport
     for link in handler.out_links.values() {
         let mut link = link.lock().await;
         if let LinkHandleResult::Activated = link.handle_packet(packet) {
-            let rtt_packet = link.create_rtt();
-            handler.send_packet(rtt_packet).await;
+            if let Ok(rtt_packet) = link.create_rtt() {
+                handler.send_packet(rtt_packet).await;
+            }
         }
     }
 
@@ -709,9 +743,9 @@ async fn handle_announce<'a>(
 
     let destination_known = handler.has_destination(&packet.destination);
 
-    if let Ok(result) = DestinationAnnounce::validate(packet) {
-        let destination = result.0;
-        let app_data = result.1;
+    if let Ok(validated) = DestinationAnnounce::validate(packet) {
+        let destination = validated.destination;
+        let app_data = validated.app_data;
         let dest_hash = destination.identity.address_hash;
         let destination = Arc::new(Mutex::new(destination));
 
@@ -862,6 +896,7 @@ async fn handle_link_request_as_destination<'a>(
                     destination.sign_key().clone(),
                     destination.desc,
                     handler.link_in_event_tx.clone(),
+                    handler.link_in_data_tx.clone(),
                 );
 
                 if let Ok(mut link) = link {
@@ -1010,6 +1045,7 @@ async fn retransmit_announces<'a>(mut handler: MutexGuard<'a, TransportHandler>)
     }
 }
 
+#[allow(dead_code)]
 fn create_retransmit_packet(packet: &Packet) -> Packet {
     Packet {
         header: Header {

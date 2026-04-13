@@ -209,9 +209,7 @@ fn load_or_create_identity(path: &Path) -> Result<PrivateIdentity, ReticulumErro
 
 // ── Inner data ────────────────────────────────────────────────────────────────
 
-/// All Reticulum runtime state.  `Drop` lives here so that `Reticulum<S>`
-/// itself has no `Drop` impl, which allows `start()` to move fields out via
-/// plain destructuring without any `unsafe` or `ManuallyDrop`.
+/// All Reticulum runtime state.
 struct ReticulumData {
     config: Config,
     paths: ReticulumPaths,
@@ -336,7 +334,6 @@ impl Reticulum<Unstarted> {
     pub async fn start(self) -> Result<Reticulum<Running>, ReticulumError> {
         log::info!("Starting Reticulum Network Stack");
 
-        // Reticulum<S> has no Drop impl, so plain destructuring is allowed.
         let Reticulum { mut data, .. } = self;
 
         let node_address = *data.identity.address_hash();

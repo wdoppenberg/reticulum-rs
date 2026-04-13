@@ -1,10 +1,9 @@
-use core::cmp::min;
 use sha2::Digest;
 
 use crate::{
-    hash::AddressHash,
-    hash::Hash,
-    packet::{Packet, PACKET_MDU, PUBLIC_KEY_LENGTH},
+    buffer::StaticBuffer,
+    hash::{AddressHash, Hash},
+    packet::{Packet, PacketContext, PACKET_MDU, PUBLIC_KEY_LENGTH},
 };
 
 pub const LINK_MTU_SIZE: usize = 3;
@@ -26,58 +25,7 @@ impl LinkStatus {
 
 pub type LinkId = AddressHash;
 
-#[derive(Clone)]
-pub struct LinkPayload {
-    buffer: [u8; PACKET_MDU],
-    len: usize,
-}
-
-impl Default for LinkPayload {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl LinkPayload {
-    pub fn new() -> Self {
-        Self {
-            buffer: [0u8; PACKET_MDU],
-            len: 0,
-        }
-    }
-
-    pub fn new_from_slice(data: &[u8]) -> Self {
-        let mut buffer = [0u8; PACKET_MDU];
-
-        let len = min(data.len(), buffer.len());
-
-        buffer[..len].copy_from_slice(&data[..len]);
-
-        Self { buffer, len }
-    }
-
-    #[cfg(feature = "alloc")]
-    pub fn new_from_vec(data: &alloc::vec::Vec<u8>) -> Self {
-        let mut buffer = [0u8; PACKET_MDU];
-
-        for i in 0..min(buffer.len(), data.len()) {
-            buffer[i] = data[i];
-        }
-
-        Self {
-            buffer,
-            len: data.len(),
-        }
-    }
-
-    pub fn len(&self) -> usize {
-        self.len
-    }
-
-    pub fn as_slice(&self) -> &[u8] {
-        &self.buffer[..self.len]
-    }
-}
+pub type LinkPayload<const N: usize = PACKET_MDU> = StaticBuffer<N>;
 
 impl From<&Packet> for LinkId {
     fn from(packet: &Packet) -> Self {
@@ -108,9 +56,26 @@ pub enum LinkHandleResult {
     KeepAlive,
 }
 
-#[derive(Clone)]
+/// Control-plane events for a link.  No payload — cheap to clone and broadcast.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LinkEvent {
     Activated,
-    Data(LinkPayload),
     Closed,
+}
+
+/// Distinguishes which logical data stream a [`LinkDataFrame`] belongs to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DataKind {
+    Data,
+    ChannelData,
+    ResourceData,
+}
+
+/// Data-plane frame.  Wrapped in `Arc` before being broadcast so that
+/// cloning the broadcast message copies only a pointer, not the payload.
+#[derive(Debug, Clone)]
+pub struct LinkDataFrame<const N: usize = PACKET_MDU> {
+    pub kind: DataKind,
+    pub context: PacketContext,
+    pub payload: LinkPayload<N>,
 }

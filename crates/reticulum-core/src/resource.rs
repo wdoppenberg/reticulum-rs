@@ -326,8 +326,10 @@ pub struct ResourcePart {
 /// Core Resource structure for managing data transfers
 #[derive(Debug)]
 pub struct Resource {
-    /// Current transfer status
-    pub status: ResourceStatus,
+    /// Current transfer status.  Use `status()` to read and `set_status()` to
+    /// write — the field is not public to prevent setting arbitrary statuses
+    /// that bypass the transfer protocol's expected ordering.
+    status: ResourceStatus,
 
     /// Resource flags
     pub flags: ResourceFlags,
@@ -513,6 +515,19 @@ impl Resource {
             hashmap,
             parts,
         }
+    }
+
+    pub fn status(&self) -> ResourceStatus {
+        self.status
+    }
+
+    /// Update the transfer status.
+    ///
+    /// Prefer the dedicated transition methods where possible.  This setter
+    /// exists for the async driver layer (`reticulum-tokio`) which manages
+    /// the overall transfer state machine.
+    pub fn set_status(&mut self, status: ResourceStatus) {
+        self.status = status;
     }
 
     /// Get progress as a percentage (0.0 to 1.0)
@@ -844,7 +859,7 @@ mod tests {
             }
         }
 
-        assert_eq!(receiver.status, ResourceStatus::Complete);
+        assert_eq!(receiver.status(), ResourceStatus::Complete);
         assert_eq!(receiver.parts_count, receiver.total_parts);
 
         // Assemble and verify

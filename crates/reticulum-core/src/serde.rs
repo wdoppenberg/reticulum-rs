@@ -2,7 +2,7 @@ use crate::{
     buffer::{InputBuffer, OutputBuffer, StaticBuffer},
     error::RnsError,
     hash::AddressHash,
-    packet::{Header, HeaderType, Packet, PacketContext},
+    packet::{Header, HeaderType, IfacFlag, Packet, PacketContext, PacketIfac, RETICULUM_MTU},
 };
 
 pub trait Serialize {
@@ -28,11 +28,27 @@ impl Serialize for PacketContext {
 
 impl Serialize for Packet {
     fn serialize(&self, buffer: &mut OutputBuffer) -> Result<usize, RnsError> {
+        let size_hint = self.wire_size_hint()?;
+        if size_hint > RETICULUM_MTU {
+            return Err(RnsError::InvalidArgument);
+        }
+
         self.header.serialize(buffer)?;
+
+        if self.header.ifac_flag == IfacFlag::Authenticated {
+            let ifac = self.ifac.ok_or(RnsError::InvalidArgument)?;
+            if ifac.length == 0 || ifac.length > u8::MAX as usize {
+                return Err(RnsError::InvalidArgument);
+            }
+            buffer.write_byte(ifac.length as u8)?;
+            buffer.write(ifac.as_slice())?;
+        }
 
         if self.header.header_type == HeaderType::Type2 {
             if let Some(transport) = &self.transport {
                 transport.serialize(buffer)?;
+            } else {
+                return Err(RnsError::InvalidArgument);
             }
         }
 
@@ -70,7 +86,23 @@ impl PacketContext {
 }
 impl Packet {
     pub fn deserialize(buffer: &mut InputBuffer) -> Result<Packet, RnsError> {
+        if buffer.bytes_left() > RETICULUM_MTU {
+            return Err(RnsError::InvalidArgument);
+        }
+
         let header = Header::deserialize(buffer)?;
+
+        let ifac = if header.ifac_flag == IfacFlag::Authenticated {
+            let ifac_len = buffer.read_byte()? as usize;
+            if ifac_len == 0 {
+                return Err(RnsError::InvalidArgument);
+            }
+
+            let ifac_bytes = buffer.read_slice(ifac_len)?;
+            Some(PacketIfac::try_new_from_slice(ifac_bytes)?)
+        } else {
+            None
+        };
 
         let transport = if header.header_type == HeaderType::Type2 {
             Some(AddressHash::deserialize(buffer)?)
@@ -84,7 +116,7 @@ impl Packet {
 
         let mut packet = Packet {
             header,
-            ifac: None,
+            ifac,
             destination,
             transport,
             context,
@@ -97,6 +129,10 @@ impl Packet {
                 .acquire_buf(buffer.bytes_left())
                 .map_err(|_| RnsError::OutOfMemory)?,
         )?;
+
+        if packet.wire_size_hint()? > RETICULUM_MTU {
+            return Err(RnsError::InvalidArgument);
+        }
 
         Ok(packet)
     }
@@ -112,8 +148,8 @@ mod tests {
         buffer::{InputBuffer, OutputBuffer, StaticBuffer},
         hash::AddressHash,
         packet::{
-            DestinationType, Header, HeaderType, IfacFlag, Packet, PacketContext, PacketType,
-            PropagationType,
+            DestinationType, Header, HeaderType, IfacFlag, Packet, PacketContext, PacketIfac,
+            PacketType, PropagationType, RETICULUM_MTU,
         },
     };
 
@@ -181,5 +217,51 @@ mod tests {
         assert_eq!(packet.transport, new_packet.transport);
         assert_eq!(packet.context, new_packet.context);
         assert_eq!(packet.data.as_slice(), new_packet.data.as_slice());
+    }
+
+    #[test]
+    fn serialize_deserialize_ifac_packet() {
+        let mut output_data = [0u8; 4096];
+        let mut buffer = OutputBuffer::new(&mut output_data);
+
+        let packet = Packet {
+            header: Header {
+                ifac_flag: IfacFlag::Authenticated,
+                ..Default::default()
+            },
+            ifac: Some(PacketIfac::try_new_from_slice(&[0xAA, 0xBB, 0xCC]).expect("valid ifac")),
+            destination: AddressHash::new_from_rand(OsRng),
+            transport: None,
+            context: PacketContext::None,
+            data: StaticBuffer::new_from_slice(b"ifac"),
+        };
+
+        packet.serialize(&mut buffer).expect("serialized packet");
+
+        let mut input_buffer = InputBuffer::new(buffer.as_slice());
+        let parsed = Packet::deserialize(&mut input_buffer).expect("deserialized packet");
+
+        assert_eq!(parsed.header.ifac_flag, IfacFlag::Authenticated);
+        assert_eq!(parsed.ifac.expect("ifac").as_slice(), &[0xAA, 0xBB, 0xCC]);
+    }
+
+    #[test]
+    fn reject_oversized_packet_for_wire() {
+        let mut output_data = [0u8; 4096];
+        let mut buffer = OutputBuffer::new(&mut output_data);
+
+        let packet = Packet {
+            header: Header {
+                ifac_flag: IfacFlag::Open,
+                ..Default::default()
+            },
+            ifac: None,
+            destination: AddressHash::new_from_rand(OsRng),
+            transport: None,
+            context: PacketContext::None,
+            data: StaticBuffer::new_from_slice(&[0x42; RETICULUM_MTU]),
+        };
+
+        assert!(packet.serialize(&mut buffer).is_err());
     }
 }

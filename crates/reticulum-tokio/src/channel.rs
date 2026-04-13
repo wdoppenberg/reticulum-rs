@@ -30,7 +30,7 @@ use reticulum_core::channel::types::{
 };
 use reticulum_core::error::RnsError;
 
-use crate::link::{Link, LinkEvent, LinkEventData, LinkId};
+use crate::link::{DataKind, Link, LinkDataEventData, LinkEvent, LinkEventData, LinkId};
 use crate::transport::Transport;
 
 /// Message type reserved for channel ACKs (matching Python implementation).
@@ -96,13 +96,15 @@ pub struct Channel {
 impl Channel {
     /// Attach a Channel to an already-established link.
     ///
-    /// `event_rx` should be a subscription to the transport's `link_in_event_tx`
-    /// (or the out-link equivalent). The caller obtains this from
-    /// `transport.subscribe_link_events()`.
+    /// `event_rx` should be a subscription to the transport's control-event bus
+    /// (`transport.subscribe_link_events()` / `transport.out_link_events()`).
+    /// `data_rx` should be a subscription to the transport's data bus
+    /// (`transport.subscribe_link_data()` / `transport.out_link_data()`).
     pub async fn new(
         link: Arc<Mutex<Link>>,
         transport: Arc<Transport>,
         event_rx: broadcast::Receiver<LinkEventData>,
+        data_rx: broadcast::Receiver<Arc<LinkDataEventData>>,
         link_speed: LinkSpeed,
     ) -> (Channel, ChannelReceiver) {
         let link_id = *link.lock().await.id();
@@ -125,7 +127,7 @@ impl Channel {
             async move {
                 run_receiver(
                     link_id, link, transport, tx_ring, rx_ring, rtt_ms, inbound_tx, event_rx,
-                    cancel,
+                    data_rx, cancel,
                 )
                 .await;
             }
@@ -294,6 +296,7 @@ async fn run_receiver(
     rtt_ms: Arc<Mutex<u32>>,
     inbound_tx: mpsc::Sender<InboundMessage>,
     mut event_rx: broadcast::Receiver<LinkEventData>,
+    mut data_rx: broadcast::Receiver<Arc<LinkDataEventData>>,
     cancel: CancellationToken,
 ) {
     loop {
@@ -301,33 +304,39 @@ async fn run_receiver(
             _ = cancel.cancelled() => break,
             result = event_rx.recv() => {
                 match result {
-                    Ok(event_data) => {
-                        if event_data.id != link_id {
-                            continue;
-                        }
-                        match event_data.event {
-                            LinkEvent::ChannelData(payload) => {
-                                handle_channel_data(
-                                    link_id,
-                                    payload.as_slice(),
-                                    &link,
-                                    &transport,
-                                    &tx_ring,
-                                    &rx_ring,
-                                    &rtt_ms,
-                                    &inbound_tx,
-                                ).await;
-                            }
-                            LinkEvent::Closed => {
-                                log::debug!("channel({}): link closed", link_id);
-                                break;
-                            }
-                            _ => {}
+                    Ok(ev) if ev.id == link_id => {
+                        if let LinkEvent::Closed = ev.event {
+                            log::debug!("channel({}): link closed", link_id);
+                            break;
                         }
                     }
+                    Ok(_) => {}
                     Err(broadcast::error::RecvError::Closed) => break,
                     Err(broadcast::error::RecvError::Lagged(n)) => {
                         log::warn!("channel({}): event receiver lagged by {}", link_id, n);
+                    }
+                }
+            }
+            result = data_rx.recv() => {
+                match result {
+                    Ok(frame_data) if frame_data.id == link_id => {
+                        if frame_data.frame.kind == DataKind::ChannelData {
+                            handle_channel_data(
+                                link_id,
+                                frame_data.frame.payload.as_slice(),
+                                &link,
+                                &transport,
+                                &tx_ring,
+                                &rx_ring,
+                                &rtt_ms,
+                                &inbound_tx,
+                            ).await;
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(broadcast::error::RecvError::Closed) => break,
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        log::warn!("channel({}): data receiver lagged by {}", link_id, n);
                     }
                 }
             }

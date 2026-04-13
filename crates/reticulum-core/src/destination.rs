@@ -108,10 +108,21 @@ impl fmt::Display for DestinationDesc {
     }
 }
 
+/// The validated result of [`DestinationAnnounce::validate`].
+///
+/// Constructible only through `validate` — the signature has been verified and
+/// the contained `destination` is guaranteed to match the announce packet.
+#[must_use]
+pub struct ValidatedAnnounce<'a> {
+    pub destination: SingleOutputDestination,
+    pub app_data: &'a [u8],
+}
+
 pub type DestinationAnnounce = Packet;
 
 impl DestinationAnnounce {
-    pub fn validate(packet: &Packet) -> Result<(SingleOutputDestination, &[u8]), RnsError> {
+    #[must_use = "discarding the validation result means the announce is silently accepted without authentication"]
+    pub fn validate(packet: &Packet) -> Result<ValidatedAnnounce<'_>, RnsError> {
         if packet.header.packet_type != PacketType::Announce {
             return Err(RnsError::PacketError);
         }
@@ -166,10 +177,13 @@ impl DestinationAnnounce {
 
         identity.verify(signed_data.as_slice(), &signature)?;
 
-        Ok((
-            SingleOutputDestination::new(identity, DestinationName::new_from_hash_slice(name_hash)),
+        Ok(ValidatedAnnounce {
+            destination: SingleOutputDestination::new(
+                identity,
+                DestinationName::new_from_hash_slice(name_hash),
+            ),
             app_data,
-        ))
+        })
     }
 }
 
@@ -459,6 +473,6 @@ mod tests {
             .announce(OsRng, None)
             .expect("valid announce packet");
 
-        DestinationAnnounce::validate(&announce).expect("valid announce");
+        let _ = DestinationAnnounce::validate(&announce).expect("valid announce");
     }
 }
