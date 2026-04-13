@@ -528,7 +528,6 @@ impl TransportHandler {
                     }
                 }
             }
-            _ => {}
         }
 
         let is_new = self.packet_cache.lock().await.update(packet);

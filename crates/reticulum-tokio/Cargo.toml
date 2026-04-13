@@ -37,9 +37,13 @@ sha2 = "0.10.9"
 x25519-dalek = "2.0.1"
 tokio-serial = "5.4.5"
 rand = "0.10.0-rc.7"
+socket2 = { version = "0.5", features = ["all"] }
+if-addrs = "0.13"
 
 [dev-dependencies]
 tokio = { version = "1.44.2", features = ["test-util"] }
+serde_json = "1"
+hex = "0.4"
 
 [[example]]
 name = "reticulum_basic"
@@ -48,3 +52,7 @@ path = "../../examples/reticulum_basic.rs"
 [[example]]
 name = "peer"
 path = "../../examples/peer.rs"
+
+[[example]]
+name = "compat_node"
+path = "../../examples/compat_node.rs"

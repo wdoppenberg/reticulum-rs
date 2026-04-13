@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio_serial::{SerialPortBuilderExt, SerialStream};
+use tokio_serial::SerialPortBuilderExt;
 use tokio_util::sync::CancellationToken;
 
 use crate::iface::RxMessage;
 use reticulum_core::buffer::{InputBuffer, OutputBuffer};
-use reticulum_core::error::RnsError;
+
 use reticulum_core::packet::Packet;
 use reticulum_core::serde::Serialize;
 
