@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use rand_core::OsRng;
 
@@ -82,12 +82,22 @@ impl PathRequest {
     }
 }
 
+/// Maximum recursive path requests forwarded in a sliding window of `ANNOUNCE_CAP_WINDOW`.
+/// This implements the 2% bandwidth cap from the Reticulum spec:
+/// path request packets are ~50-80 bytes; a conservative limit of 64 requests
+/// per second covers most link types without flooding the network.
+const RECURSIVE_REQUEST_CAP: usize = 64;
+/// Sliding window duration for the cap.
+const ANNOUNCE_CAP_WINDOW: std::time::Duration = std::time::Duration::from_secs(1);
+
 pub struct PathRequests {
     cache: BTreeSet<(AddressHash, TagBytes)>,
     name: String,
     transport_id: Option<AddressHash>,
     controlled_destination: PlainInputDestination,
     discovery: BTreeMap<AddressHash, Instant>,
+    /// Timestamps of recent recursive path requests (for cap enforcement).
+    recent_recursive: VecDeque<std::time::Instant>,
 }
 
 impl PathRequests {
@@ -98,6 +108,7 @@ impl PathRequests {
             transport_id,
             controlled_destination: create_path_request_destination(),
             discovery: BTreeMap::new(),
+            recent_recursive: VecDeque::new(),
         }
     }
 
@@ -168,7 +179,28 @@ impl PathRequests {
             }
         }
 
-        // TODO implement announce queue and announce cap, reject requests based on that
+        // Enforce a cap on recursive path requests forwarded per second to avoid
+        // network flooding (Reticulum spec: max 2% of interface bandwidth).
+        let now_std = std::time::Instant::now();
+        // Evict timestamps outside the sliding window.
+        while let Some(front) = self.recent_recursive.front() {
+            if now_std.duration_since(*front) > ANNOUNCE_CAP_WINDOW {
+                self.recent_recursive.pop_front();
+            } else {
+                break;
+            }
+        }
+        if self.recent_recursive.len() >= RECURSIVE_REQUEST_CAP {
+            log::debug!(
+                "tp({}): recursive path request for {} rejected by announce cap ({} in last {:?})",
+                self.name,
+                destination,
+                self.recent_recursive.len(),
+                ANNOUNCE_CAP_WINDOW,
+            );
+            return false;
+        }
+        self.recent_recursive.push_back(now_std);
 
         true
     }

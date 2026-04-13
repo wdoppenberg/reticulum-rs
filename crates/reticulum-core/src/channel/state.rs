@@ -21,14 +21,22 @@ use std::collections::HashMap;
 pub struct TxMessageEntry<const N: usize = MAX_ENVELOPE_SIZE> {
     /// The envelope to send
     pub envelope: Envelope<N>,
-    /// Current state
-    pub state: MessageState,
+    /// Current state — `pub(crate)` to prevent external code from bypassing
+    /// the state-transition methods (`mark_sent`, etc.).
+    pub(crate) state: MessageState,
     /// Number of transmission attempts
     pub tries: u8,
     /// Timestamp of last transmission (milliseconds since epoch)
     pub last_sent_ms: Option<u64>,
     /// Calculated timeout for this message (milliseconds)
     pub timeout_ms: u32,
+}
+
+impl<const N: usize> TxMessageEntry<N> {
+    /// Observe the current state without being able to mutate it directly.
+    pub fn state(&self) -> MessageState {
+        self.state
+    }
 }
 
 impl<const N: usize> TxMessageEntry<N> {
@@ -113,11 +121,12 @@ impl<const N: usize> TxRing<N> {
         }
     }
 
-    /// Add a new message to the TX ring
+    /// Add a new message to the TX ring.
+    ///
+    /// Returns `Err(RnsError::WindowFull)` when all window slots are in use.
     pub fn push(&mut self, msg_type: MessageType, payload: &[u8]) -> Result<SequenceNumber, RnsError> {
-        // Check if we have space in the window
         if self.ring.len() >= self.window_size {
-            return Err(RnsError::OutOfMemory);
+            return Err(RnsError::WindowFull);
         }
 
         let seq = self.next_seq;
@@ -289,7 +298,7 @@ impl<const N: usize> RxRing<N> {
         } else {
             // Out of order message - buffer it
             if self.out_of_order.len() >= self.max_out_of_order {
-                return Err(RnsError::OutOfMemory);
+                return Err(RnsError::WindowFull);
             }
 
             let entry = RxMessageEntry::new(envelope, current_time_ms);
@@ -439,7 +448,7 @@ mod tests {
         let mut entry = TxMessageEntry::new(envelope);
 
         entry.mark_sent(1000, 100, 0);
-        assert_eq!(entry.state, MessageState::Sent);
+        assert_eq!(entry.state(), MessageState::Sent);
         assert_eq!(entry.tries, 1);
 
         // Not timed out yet

@@ -18,8 +18,9 @@ crypto-common = { version = "0.1.6", default-features = false, features = ["rand
 aes = { version = "0.8.4", default-features = false }
 cbc = { version = "0.1.2", default-features = false }
 cipher = { version = "0.4", default-features = false, features = ["block-padding"] }
-x25519-dalek = { version = "2.0.1", default-features = false, features = ["static_secrets"] }
-ed25519-dalek = { version = "2.1.1", default-features = false }
+x25519-dalek = { version = "2.0.1", default-features = false, features = ["static_secrets", "zeroize"] }
+ed25519-dalek = { version = "2.1.1", default-features = false, features = ["zeroize"] }
+zeroize = { version = "1", default-features = false }
 hkdf = { version = "0.12.4", default-features = false }
 hmac = { version = "0.12.1", default-features = false }
 sha2 = { version = "0.10.8", default-features = false }

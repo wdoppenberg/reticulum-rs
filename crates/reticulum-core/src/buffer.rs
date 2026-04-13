@@ -97,14 +97,35 @@ impl<const N: usize> StaticBuffer<N> {
         &mut self.buffer[..self.len]
     }
 
+    /// Claim `len` bytes of the buffer as initialised, returning a mutable
+    /// slice to them.  Returns `Err(OutOfMemory)` if `len > N` rather than
+    /// panicking.
+    pub fn acquire_buf(&mut self, len: usize) -> Result<&mut [u8], RnsError> {
+        if len > N {
+            return Err(RnsError::OutOfMemory);
+        }
+        self.len = len;
+        Ok(&mut self.buffer[..self.len])
+    }
+
+    /// Claim the entire backing array as initialised and return a mutable
+    /// slice to it.  This is always safe because `N` is the exact array size.
+    pub fn acquire_buf_max(&mut self) -> &mut [u8] {
+        self.len = self.buffer.len();
+        &mut self.buffer[..self.len]
+    }
+
+    /// Deprecated: use [`acquire_buf`](Self::acquire_buf) instead.
+    #[deprecated(since = "0.1.1", note = "use acquire_buf (fixes bounds check and spelling)")]
     pub fn accuire_buf(&mut self, len: usize) -> &mut [u8] {
         self.len = len;
         &mut self.buffer[..self.len]
     }
 
+    /// Deprecated: use [`acquire_buf_max`](Self::acquire_buf_max) instead.
+    #[deprecated(since = "0.1.1", note = "use acquire_buf_max (fixes spelling)")]
     pub fn accuire_buf_max(&mut self) -> &mut [u8] {
-        self.len = self.buffer.len();
-        &mut self.buffer[..self.len]
+        self.acquire_buf_max()
     }
 }
 

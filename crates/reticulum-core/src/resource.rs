@@ -396,8 +396,10 @@ pub struct Resource {
     /// Effective instantaneous data rate
     pub eifr: Option<f64>,
 
-    /// Consecutive completed height (for receiver)
-    pub consecutive_completed_height: i32,
+    /// Consecutive completed height (for receiver).
+    /// `None` means no part has been delivered yet; `Some(n)` means parts
+    /// `0..=n` have been delivered in order.
+    pub consecutive_completed_height: Option<usize>,
 
     /// SDU (Segment Data Unit) size
     pub sdu: usize,
@@ -455,7 +457,7 @@ impl Resource {
             max_retries: MAX_RETRIES,
             rtt: None,
             eifr: None,
-            consecutive_completed_height: -1,
+            consecutive_completed_height: None,
             sdu,
             #[cfg(feature = "alloc")]
             hashmap,
@@ -504,7 +506,7 @@ impl Resource {
             max_retries: MAX_RETRIES,
             rtt: None,
             eifr: None,
-            consecutive_completed_height: -1,
+            consecutive_completed_height: None,
             sdu,
             hashmap,
             parts,
@@ -622,11 +624,10 @@ impl Resource {
 
         let part_hash = Self::get_map_hash(&part_data);
 
-        // Find matching hash in hashmap
-        let consecutive_index = if self.consecutive_completed_height >= 0 {
-            self.consecutive_completed_height as usize
-        } else {
-            0
+        // Find matching hash in hashmap, starting from the first unreceived part.
+        let consecutive_index = match self.consecutive_completed_height {
+            Some(h) => h,   // search from the last delivered part onward
+            None => 0,      // nothing delivered yet — start from the beginning
         };
 
         for i in consecutive_index..(consecutive_index + self.window).min(self.hashmap.len()) {
@@ -637,14 +638,14 @@ impl Resource {
                     self.parts_count += 1;
                     self.outstanding_parts = self.outstanding_parts.saturating_sub(1);
 
-                    // Update consecutive completed height
-                    if i as i32 == self.consecutive_completed_height + 1 {
-                        self.consecutive_completed_height = i as i32;
-
-                        // Advance as far as possible
-                        let mut cp = self.consecutive_completed_height as usize + 1;
+                    // Update consecutive completed height: advance if this part
+                    // immediately follows the current frontier, then keep going.
+                    let frontier = self.consecutive_completed_height.map(|h| h + 1).unwrap_or(0);
+                    if i == frontier {
+                        self.consecutive_completed_height = Some(i);
+                        let mut cp = i + 1;
                         while cp < self.parts.len() && self.parts[cp].is_some() {
-                            self.consecutive_completed_height = cp as i32;
+                            self.consecutive_completed_height = Some(cp);
                             cp += 1;
                         }
                     }
@@ -704,10 +705,9 @@ impl Resource {
     /// Request next window of parts
     #[cfg(feature = "alloc")]
     pub fn request_next_window(&mut self) -> Vec<usize> {
-        let start_index = if self.consecutive_completed_height >= 0 {
-            (self.consecutive_completed_height + 1) as usize
-        } else {
-            0
+        let start_index = match self.consecutive_completed_height {
+            Some(h) => h + 1,
+            None => 0,
         };
 
         let end_index = (start_index + self.window).min(self.total_parts);

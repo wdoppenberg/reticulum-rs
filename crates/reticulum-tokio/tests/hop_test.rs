@@ -23,7 +23,11 @@ async fn build_transport_full(
     client_addr: &[&str],
     retransmit: bool,
 ) -> Transport {
-    let mut config = TransportConfig::new(name, &PrivateIdentity::new_from_rand(OsRng), true);
+    let mut config = TransportConfig::new(
+        name,
+        *PrivateIdentity::new_from_rand(OsRng).address_hash(),
+        true,
+    );
 
     if retransmit {
         config.set_retransmit(true);

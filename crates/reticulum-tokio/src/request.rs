@@ -197,9 +197,18 @@ impl Default for RequestManager {
 pub type RequestHandler =
     Arc<dyn Fn(RequestContext) -> Option<Vec<u8>> + Send + Sync + 'static>;
 
+/// Internal entry stored per registered path.
+struct HandlerEntry {
+    handler: RequestHandler,
+    policy: RequestPolicy,
+    /// Identity hashes allowed when policy is `AllowList`.
+    /// Empty means no identities are allowed (equivalent to `AllowNone`).
+    allowed_identities: Vec<reticulum_core::hash::AddressHash>,
+}
+
 /// Destination request handler registry
 pub struct RequestHandlerRegistry {
-    handlers: Arc<RwLock<HashMap<String, (RequestHandler, RequestPolicy)>>>,
+    handlers: Arc<RwLock<HashMap<String, HandlerEntry>>>,
 }
 
 impl RequestHandlerRegistry {
@@ -210,15 +219,35 @@ impl RequestHandlerRegistry {
         }
     }
 
-    /// Register a request handler for a specific path
+    /// Register a request handler for a specific path with `AllowAll` or `AllowNone`.
     pub async fn register<F>(&self, path: &str, policy: RequestPolicy, handler: F)
     where
         F: Fn(RequestContext) -> Option<Vec<u8>> + Send + Sync + 'static,
     {
-        self.handlers
-            .write()
-            .await
-            .insert(path.to_string(), (Arc::new(handler), policy));
+        self.register_with_allow_list(path, policy, vec![], handler)
+            .await;
+    }
+
+    /// Register a request handler with an explicit allow-list of identity hashes.
+    ///
+    /// Only meaningful when `policy` is [`RequestPolicy::AllowList`].
+    pub async fn register_with_allow_list<F>(
+        &self,
+        path: &str,
+        policy: RequestPolicy,
+        allowed_identities: Vec<reticulum_core::hash::AddressHash>,
+        handler: F,
+    ) where
+        F: Fn(RequestContext) -> Option<Vec<u8>> + Send + Sync + 'static,
+    {
+        self.handlers.write().await.insert(
+            path.to_string(),
+            HandlerEntry {
+                handler: Arc::new(handler),
+                policy,
+                allowed_identities,
+            },
+        );
         log::debug!("Registered request handler for path: {}", path);
     }
 
@@ -227,26 +256,31 @@ impl RequestHandlerRegistry {
         self.handlers.write().await.remove(path).is_some()
     }
 
-    /// Handle an incoming request
+    /// Handle an incoming request, enforcing the registered policy.
     pub async fn handle_request(&self, context: RequestContext) -> Option<Vec<u8>> {
         let handlers = self.handlers.read().await;
-        if let Some((handler, policy)) = handlers.get(&context.path) {
-            // TODO: Implement policy checking
-            match policy {
+        if let Some(entry) = handlers.get(&context.path) {
+            match entry.policy {
                 RequestPolicy::AllowNone => {
                     log::warn!("Request to {} denied by policy: AllowNone", context.path);
                     return None;
                 }
                 RequestPolicy::AllowAll => {
-                    // Allow all requests
+                    // Permit unconditionally.
                 }
                 RequestPolicy::AllowList => {
-                    // TODO: Check against allowed identities list
-                    log::debug!("AllowList policy not yet fully implemented");
+                    let requester_hash = context.remote_identity.address_hash;
+                    if !entry.allowed_identities.contains(&requester_hash) {
+                        log::warn!(
+                            "Request to {} denied by AllowList: {} is not in the allow-list",
+                            context.path, requester_hash
+                        );
+                        return None;
+                    }
                 }
             }
 
-            handler(context)
+            (entry.handler)(context)
         } else {
             log::warn!("No handler registered for path: {}", context.path);
             None

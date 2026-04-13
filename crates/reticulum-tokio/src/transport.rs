@@ -78,7 +78,10 @@ pub struct ReceivedData {
 
 pub struct TransportConfig {
     name: String,
-    identity: PrivateIdentity,
+    /// The node's network address, derived from the identity at construction
+    /// time.  The transport never holds the private key — it only needs to
+    /// advertise its address.
+    node_address: AddressHash,
     broadcast: bool,
     retransmit: bool,
 }
@@ -129,10 +132,10 @@ pub struct Transport {
 }
 
 impl TransportConfig {
-    pub fn new<T: Into<String>>(name: T, identity: &PrivateIdentity, broadcast: bool) -> Self {
+    pub fn new<T: Into<String>>(name: T, node_address: AddressHash, broadcast: bool) -> Self {
         Self {
             name: name.into(),
-            identity: identity.clone(),
+            node_address,
             broadcast,
             retransmit: false,
         }
@@ -150,7 +153,7 @@ impl Default for TransportConfig {
     fn default() -> Self {
         Self {
             name: "tp".into(),
-            identity: PrivateIdentity::new_from_rand(OsRng),
+            node_address: AddressHash::new_from_rand(OsRng),
             broadcast: false,
             retransmit: false,
         }
@@ -172,7 +175,7 @@ impl Transport {
         let iface_manager = Arc::new(Mutex::new(iface_manager));
 
         let transport_id = if config.retransmit {
-            Some(*config.identity.address_hash())
+            Some(config.node_address)
         } else {
             None
         };
@@ -240,6 +243,17 @@ impl Transport {
 
     pub fn iface_rx(&self) -> broadcast::Receiver<RxMessage> {
         self.iface_messages_tx.subscribe()
+    }
+
+    /// Subscribe to all link events (activated, data, channel data, resource
+    /// data, closed) for both inbound and outbound links.
+    pub fn subscribe_link_events(&self) -> broadcast::Receiver<crate::link::LinkEventData> {
+        self.link_in_event_tx.subscribe()
+    }
+
+    /// Subscribe to outbound (client-side) link events.
+    pub fn subscribe_out_link_events(&self) -> broadcast::Receiver<crate::link::LinkEventData> {
+        self.link_out_event_tx.subscribe()
     }
 
     pub async fn recv_announces(&self) -> broadcast::Receiver<AnnounceEvent> {
@@ -726,7 +740,7 @@ async fn handle_announce<'a>(
 
         let retransmit = handler.config.retransmit;
         if retransmit {
-            let transport_id = *handler.config.identity.address_hash();
+            let transport_id = handler.config.node_address;
             if let Some(message) = handler.announce_table.new_packet(&dest_hash, &transport_id) {
                 handler.send(message).await;
             }
@@ -989,7 +1003,7 @@ async fn handle_cleanup<'a>(handler: MutexGuard<'a, TransportHandler>) {
 }
 
 async fn retransmit_announces<'a>(mut handler: MutexGuard<'a, TransportHandler>) {
-    let transport_id = *handler.config.identity.address_hash();
+    let transport_id = handler.config.node_address;
     let messages = handler.announce_table.to_retransmit(&transport_id);
 
     for message in messages {

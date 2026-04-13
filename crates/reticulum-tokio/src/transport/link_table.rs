@@ -101,13 +101,18 @@ impl LinkTable {
         }
     }
 
+    /// Timeout for validated (active relay) link entries without recent refresh.
+    const ACTIVE_RELAY_TIMEOUT: Duration = Duration::from_secs(600);
+
     pub fn remove_stale(&mut self) {
         let mut stale = vec![];
         let now = Instant::now();
 
         for (link_id, entry) in &self.0 {
             if entry.validated {
-                // TODO remove active timed out links
+                if entry.timestamp + Self::ACTIVE_RELAY_TIMEOUT <= now {
+                    stale.push(*link_id);
+                }
             } else if entry.proof_timeout <= now {
                 stale.push(*link_id);
             }

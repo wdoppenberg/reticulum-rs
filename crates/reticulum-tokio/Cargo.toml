@@ -44,3 +44,7 @@ tokio = { version = "1.44.2", features = ["test-util"] }
 [[example]]
 name = "reticulum_basic"
 path = "../../examples/reticulum_basic.rs"
+
+[[example]]
+name = "peer"
+path = "../../examples/peer.rs"

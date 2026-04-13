@@ -73,7 +73,16 @@ impl Identity {
         }
     }
 
-    pub fn new_from_slices(public_key: &[u8], verifying_key: &[u8]) -> Self {
+    /// Construct an `Identity` from raw public-key and verifying-key byte slices.
+    ///
+    /// Returns `Err(RnsError::CryptoError)` if either slice is not exactly
+    /// [`PUBLIC_KEY_LENGTH`] bytes or if the Ed25519 verifying key is invalid,
+    /// rather than silently substituting a zero key.
+    pub fn new_from_slices(public_key: &[u8], verifying_key: &[u8]) -> Result<Self, RnsError> {
+        if public_key.len() != PUBLIC_KEY_LENGTH || verifying_key.len() != PUBLIC_KEY_LENGTH {
+            return Err(RnsError::InvalidArgument);
+        }
+
         let public_key = {
             let mut key_data = [0u8; PUBLIC_KEY_LENGTH];
             key_data.copy_from_slice(public_key);
@@ -83,10 +92,10 @@ impl Identity {
         let verifying_key = {
             let mut key_data = [0u8; PUBLIC_KEY_LENGTH];
             key_data.copy_from_slice(verifying_key);
-            VerifyingKey::from_bytes(&key_data).unwrap_or_default()
+            VerifyingKey::from_bytes(&key_data).map_err(|_| RnsError::CryptoError)?
         };
 
-        Self::new(public_key, verifying_key)
+        Ok(Self::new(public_key, verifying_key))
     }
 
     pub fn new_from_hex_string(hex_string: &str) -> Result<Self, RnsError> {
@@ -98,18 +107,16 @@ impl Identity {
         let mut verifying_key_bytes = [0u8; PUBLIC_KEY_LENGTH];
 
         for i in 0..PUBLIC_KEY_LENGTH {
-            public_key_bytes[i] = u8::from_str_radix(&hex_string[i * 2..(i * 2) + 2], 16).unwrap();
+            public_key_bytes[i] = u8::from_str_radix(&hex_string[i * 2..(i * 2) + 2], 16)
+                .map_err(|_| RnsError::IncorrectHash)?;
             verifying_key_bytes[i] = u8::from_str_radix(
                 &hex_string[PUBLIC_KEY_LENGTH * 2 + (i * 2)..PUBLIC_KEY_LENGTH * 2 + (i * 2) + 2],
                 16,
             )
-            .unwrap();
+            .map_err(|_| RnsError::IncorrectHash)?;
         }
 
-        Ok(Self::new_from_slices(
-            &public_key_bytes[..],
-            &verifying_key_bytes[..],
-        ))
+        Self::new_from_slices(&public_key_bytes[..], &verifying_key_bytes[..])
     }
 
     pub fn to_hex_string(&self) -> String {
@@ -237,12 +244,21 @@ impl DecryptIdentity for EmptyIdentity {
     }
 }
 
-#[derive(Clone)]
+/// A Reticulum identity that holds private key material.
+///
+/// **Not `Clone`**: private key bytes must never be silently duplicated across
+/// stack frames.  Key material is zeroed in memory when this value is dropped.
 pub struct PrivateIdentity {
     identity: Identity,
     private_key: StaticSecret,
     sign_key: SigningKey,
 }
+
+// Both `StaticSecret` (x25519-dalek, "zeroize" feature) and `SigningKey`
+// (ed25519-dalek, "zeroize" feature) implement `ZeroizeOnDrop`, meaning their
+// own `Drop` impls zero the private bytes.  Because Rust drops struct fields
+// in declaration order, the sensitive key material is automatically zeroed
+// whenever a `PrivateIdentity` value is dropped — no explicit `Drop` needed.
 
 impl PrivateIdentity {
     pub fn new(private_key: StaticSecret, sign_key: SigningKey) -> Self {
@@ -279,12 +295,13 @@ impl PrivateIdentity {
         let mut sign_key_bytes = [0u8; PUBLIC_KEY_LENGTH];
 
         for i in 0..PUBLIC_KEY_LENGTH {
-            private_key_bytes[i] = u8::from_str_radix(&hex_string[i * 2..(i * 2) + 2], 16).unwrap();
+            private_key_bytes[i] = u8::from_str_radix(&hex_string[i * 2..(i * 2) + 2], 16)
+                .map_err(|_| RnsError::IncorrectHash)?;
             sign_key_bytes[i] = u8::from_str_radix(
                 &hex_string[PUBLIC_KEY_LENGTH * 2 + (i * 2)..PUBLIC_KEY_LENGTH * 2 + (i * 2) + 2],
                 16,
             )
-            .unwrap();
+            .map_err(|_| RnsError::IncorrectHash)?;
         }
 
         Ok(Self::new(

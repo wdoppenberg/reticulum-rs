@@ -187,6 +187,13 @@ pub struct Envelope<const N: usize = MAX_ENVELOPE_SIZE> {
 }
 
 impl<const N: usize> Envelope<N> {
+    /// Compile-time guard: the buffer must be large enough to hold the 6-byte
+    /// header plus at least one byte of payload.
+    const _MIN_SIZE: () = assert!(
+        N >= ENVELOPE_HEADER_SIZE,
+        "Envelope buffer N must be at least ENVELOPE_HEADER_SIZE (6) bytes"
+    );
+
     /// Create a new envelope
     pub fn new(msg_type: MessageType, sequence: SequenceNumber, payload: &[u8]) -> Result<Self, RnsError> {
         let mut payload_buf = StaticBuffer::new();

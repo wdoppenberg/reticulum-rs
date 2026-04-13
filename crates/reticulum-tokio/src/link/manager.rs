@@ -123,6 +123,8 @@ pub enum LinkHandleResult {
 pub enum LinkEvent {
     Activated,
     Data(LinkPayload),
+    ChannelData(LinkPayload),
+    ResourceData(LinkPayload, PacketContext),
     Closed,
 }
 
@@ -176,7 +178,8 @@ impl Link {
         let peer_identity = Identity::new_from_slices(
             &packet.data.as_slice()[..PUBLIC_KEY_LENGTH],
             &packet.data.as_slice()[PUBLIC_KEY_LENGTH..PUBLIC_KEY_LENGTH * 2],
-        );
+        )
+        .map_err(|_| RnsError::CryptoError)?;
 
         let link_id = link_id_from_packet(packet);
         log::debug!("link: create from request {}", link_id);
@@ -274,6 +277,32 @@ impl Link {
                     log::error!("link({}): can't decrypt packet", self.id);
                 }
             }
+            PacketContext::Channel => {
+                let mut buffer = [0u8; PACKET_MDU];
+                if let Ok(plain_text) = self.decrypt(packet.data.as_slice(), &mut buffer[..]) {
+                    log::trace!("link({}): channel data {}B", self.id, plain_text.len());
+                    self.request_time = Instant::now();
+                    self.post_event(LinkEvent::ChannelData(LinkPayload::new_from_slice(plain_text)));
+                } else {
+                    log::error!("link({}): can't decrypt channel packet", self.id);
+                }
+            }
+            ctx @ (PacketContext::Resource
+                | PacketContext::ResourceAdvrtisement
+                | PacketContext::ResourceRequest
+                | PacketContext::ResourceHashUpdate
+                | PacketContext::ResourceProof
+                | PacketContext::ResourceInitiatorCancel
+                | PacketContext::ResourceReceiverCancel) => {
+                let mut buffer = [0u8; PACKET_MDU];
+                if let Ok(plain_text) = self.decrypt(packet.data.as_slice(), &mut buffer[..]) {
+                    log::trace!("link({}): resource data {}B ctx={:?}", self.id, plain_text.len(), ctx);
+                    self.request_time = Instant::now();
+                    self.post_event(LinkEvent::ResourceData(LinkPayload::new_from_slice(plain_text), ctx));
+                } else {
+                    log::error!("link({}): can't decrypt resource packet", self.id);
+                }
+            }
             PacketContext::KeepAlive => {
                 if packet.data.len() >= 1 && packet.data.as_slice()[0] == 0xFF {
                     self.request_time = Instant::now();
@@ -336,7 +365,7 @@ impl Link {
         let mut packet_data = PacketDataBuffer::new();
 
         let cipher_text_len = {
-            let cipher_text = self.encrypt(data, packet_data.accuire_buf_max())?;
+            let cipher_text = self.encrypt(data, packet_data.acquire_buf_max())?;
             cipher_text.len()
         };
 
@@ -352,6 +381,48 @@ impl Link {
             destination: self.id,
             transport: None,
             context: PacketContext::None,
+            data: packet_data,
+        })
+    }
+
+    pub fn channel_packet(&self, data: &[u8]) -> Result<Packet, RnsError> {
+        let mut packet_data = PacketDataBuffer::new();
+        let cipher_text_len = {
+            let cipher_text = self.encrypt(data, packet_data.acquire_buf_max())?;
+            cipher_text.len()
+        };
+        packet_data.resize(cipher_text_len);
+        Ok(Packet {
+            header: Header {
+                destination_type: DestinationType::Link,
+                packet_type: PacketType::Data,
+                ..Default::default()
+            },
+            ifac: None,
+            destination: self.id,
+            transport: None,
+            context: PacketContext::Channel,
+            data: packet_data,
+        })
+    }
+
+    pub fn resource_packet(&self, data: &[u8], context: PacketContext) -> Result<Packet, RnsError> {
+        let mut packet_data = PacketDataBuffer::new();
+        let cipher_text_len = {
+            let cipher_text = self.encrypt(data, packet_data.acquire_buf_max())?;
+            cipher_text.len()
+        };
+        packet_data.resize(cipher_text_len);
+        Ok(Packet {
+            header: Header {
+                destination_type: DestinationType::Link,
+                packet_type: PacketType::Data,
+                ..Default::default()
+            },
+            ifac: None,
+            destination: self.id,
+            transport: None,
+            context,
             data: packet_data,
         })
     }
@@ -402,7 +473,7 @@ impl Link {
 
         let token_len = {
             let token = self
-                .encrypt(buf.as_slice(), packet_data.accuire_buf_max())
+                .encrypt(buf.as_slice(), packet_data.acquire_buf_max())
                 .expect("encrypted data");
             token.len()
         };
@@ -471,6 +542,10 @@ impl Link {
     pub fn id(&self) -> &LinkId {
         &self.id
     }
+
+    pub fn rtt_ms(&self) -> u32 {
+        (self.rtt.as_millis() as u32).max(25)
+    }
 }
 
 fn validate_proof_packet(
@@ -509,7 +584,8 @@ fn validate_proof_packet(
     let identity = Identity::new_from_slices(
         &proof_data[ADDRESS_HASH_SIZE..ADDRESS_HASH_SIZE + PUBLIC_KEY_LENGTH],
         verifying_key,
-    );
+    )
+    .map_err(|_| RnsError::CryptoError)?;
 
     let signature = Signature::from_slice(&packet.data.as_slice()[..SIGNATURE_LENGTH])
         .map_err(|_| RnsError::CryptoError)?;

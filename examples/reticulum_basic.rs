@@ -10,7 +10,6 @@
 ///
 /// To use a custom config:
 ///   cargo run --example reticulum_basic -- /path/to/config/dir
-
 use reticulum_tokio::{Reticulum, ReticulumError};
 use std::path::PathBuf;
 
@@ -24,39 +23,53 @@ async fn main() -> Result<(), ReticulumError> {
     log::info!("Reticulum Basic Example");
 
     // Get config directory from command line args or use default
-    let config_dir = std::env::args()
-        .nth(1)
-        .map(PathBuf::from);
+    let config_dir = std::env::args().nth(1).map(PathBuf::from);
 
-    // Initialize Reticulum instance
-    let mut reticulum = Reticulum::new(config_dir).await?;
+    // Initialize Reticulum instance (Unstarted state)
+    let reticulum = Reticulum::new(config_dir).await?;
 
-    // Display configuration information
-    log::info!("Configuration loaded from: {}", reticulum.paths().config_path.display());
+    // Display configuration information (available in any state)
+    log::info!(
+        "Configuration loaded from: {}",
+        reticulum.paths().config_path.display()
+    );
     log::info!("Storage path: {}", reticulum.paths().storage_path.display());
-    log::info!("Transport enabled: {}", reticulum.config().reticulum.enable_transport);
-    log::info!("Share instance: {}", reticulum.config().reticulum.share_instance);
+    log::info!(
+        "Transport enabled: {}",
+        reticulum.config().reticulum.enable_transport
+    );
+    log::info!(
+        "Share instance: {}",
+        reticulum.config().reticulum.share_instance
+    );
     log::info!("Log level: {}", reticulum.config().logging.loglevel);
 
-    // Display identity information
-    let identity = reticulum.identity();
-    log::info!("Network identity hash: {}", identity.address_hash());
-
     // Display interface configuration
-    log::info!("Configured interfaces: {}", reticulum.config().interfaces.len());
+    log::info!(
+        "Configured interfaces: {}",
+        reticulum.config().interfaces.len()
+    );
     for (name, iface_config) in &reticulum.config().interfaces {
-        log::info!("  - {} ({:?})", name, match iface_config {
-            reticulum_tokio::InterfaceConfig::Tcp(_) => "TCP",
-            reticulum_tokio::InterfaceConfig::Udp(_) => "UDP",
-            reticulum_tokio::InterfaceConfig::Auto(_) => "Auto",
-            reticulum_tokio::InterfaceConfig::Serial(_) => "Serial",
-            reticulum_tokio::InterfaceConfig::I2P(_) => "I2P",
-        });
+        log::info!(
+            "  - {} ({:?})",
+            name,
+            match iface_config {
+                reticulum_tokio::InterfaceConfig::Tcp(_) => "TCP",
+                reticulum_tokio::InterfaceConfig::Udp(_) => "UDP",
+                reticulum_tokio::InterfaceConfig::Auto(_) => "Auto",
+                reticulum_tokio::InterfaceConfig::Serial(_) => "Serial",
+                reticulum_tokio::InterfaceConfig::I2P(_) => "I2P",
+            }
+        );
     }
 
-    // Start the Reticulum stack
+    // Start the Reticulum stack — transitions to Running state
     log::info!("Starting Reticulum...");
-    reticulum.start().await?;
+    let reticulum = reticulum.start().await?;
+
+    // Identity and transport are only accessible once running
+    let identity = reticulum.identity();
+    log::info!("Network identity hash: {}", identity.address_hash());
 
     log::info!("Reticulum is running!");
     log::info!("Press Ctrl+C to shutdown...");
@@ -67,8 +80,6 @@ async fn main() -> Result<(), ReticulumError> {
         .expect("Failed to listen for ctrl-c");
 
     log::info!("Shutdown signal received");
-    reticulum.shutdown().await;
-
     log::info!("Reticulum stopped");
 
     Ok(())
