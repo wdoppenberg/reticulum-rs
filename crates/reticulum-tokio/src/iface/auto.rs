@@ -25,7 +25,6 @@ use socket2::{Domain, Protocol, Socket, Type};
 use tokio::net::UdpSocket;
 use tokio::sync::{Mutex, RwLock};
 
-
 use crate::iface::RxMessage;
 use reticulum_core::buffer::{InputBuffer, OutputBuffer};
 use reticulum_core::packet::Packet;
@@ -106,11 +105,7 @@ pub struct AutoInterface {
 }
 
 impl AutoInterface {
-    pub fn new(
-        group: Option<String>,
-        discovery_port: Option<u16>,
-        data_port: Option<u16>,
-    ) -> Self {
+    pub fn new(group: Option<String>, discovery_port: Option<u16>, data_port: Option<u16>) -> Self {
         Self {
             group_id: group
                 .map(|g| g.into_bytes())

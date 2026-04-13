@@ -62,8 +62,8 @@ impl Args {
             i += 1;
         }
 
-        let config_dir = config_dir
-            .unwrap_or_else(|| std::env::temp_dir().join("reticulum_compat_node"));
+        let config_dir =
+            config_dir.unwrap_or_else(|| std::env::temp_dir().join("reticulum_compat_node"));
 
         Self {
             port,
@@ -79,7 +79,11 @@ async fn main() -> Result<(), ReticulumError> {
 
     let args = Args::parse();
 
-    log::info!("compat_node: port={} config={}", args.port, args.config_dir.display());
+    log::info!(
+        "compat_node: port={} config={}",
+        args.port,
+        args.config_dir.display()
+    );
 
     // ── Build config TOML inline ──────────────────────────────────────────────
 

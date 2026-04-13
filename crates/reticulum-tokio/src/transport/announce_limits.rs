@@ -88,10 +88,8 @@ impl AnnounceLimits {
             return entry.handle_announce();
         }
 
-        self.limits.insert(
-            *destination,
-            AnnounceLimitEntry::new(Default::default()),
-        );
+        self.limits
+            .insert(*destination, AnnounceLimitEntry::new(Default::default()));
 
         None
     }

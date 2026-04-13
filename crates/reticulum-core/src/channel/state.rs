@@ -6,9 +6,9 @@ use super::types::*;
 use crate::error::RnsError;
 
 #[cfg(feature = "alloc")]
-use alloc::vec::Vec;
-#[cfg(feature = "alloc")]
 use alloc::collections::VecDeque;
+#[cfg(feature = "alloc")]
+use alloc::vec::Vec;
 
 #[cfg(feature = "alloc")]
 extern crate std;
@@ -124,7 +124,11 @@ impl<const N: usize> TxRing<N> {
     /// Add a new message to the TX ring.
     ///
     /// Returns `Err(RnsError::WindowFull)` when all window slots are in use.
-    pub fn push(&mut self, msg_type: MessageType, payload: &[u8]) -> Result<SequenceNumber, RnsError> {
+    pub fn push(
+        &mut self,
+        msg_type: MessageType,
+        payload: &[u8],
+    ) -> Result<SequenceNumber, RnsError> {
         if self.ring.len() >= self.window_size {
             return Err(RnsError::WindowFull);
         }
@@ -145,12 +149,10 @@ impl<const N: usize> TxRing<N> {
     pub fn messages_to_send(&self, current_time_ms: u64) -> Vec<SequenceNumber> {
         self.ring
             .iter()
-            .filter(|entry| {
-                match entry.state {
-                    MessageState::New => true,
-                    MessageState::Sent => entry.is_timed_out(current_time_ms) && entry.can_retry(),
-                    _ => false,
-                }
+            .filter(|entry| match entry.state {
+                MessageState::New => true,
+                MessageState::Sent => entry.is_timed_out(current_time_ms) && entry.can_retry(),
+                _ => false,
             })
             .map(|entry| entry.envelope.sequence)
             .collect()
@@ -393,10 +395,10 @@ mod tests {
     fn test_rx_ring_in_order() {
         let mut rx_ring: RxRing = RxRing::new();
 
-        let env1: Envelope = Envelope::new(MessageType::new(1), SequenceNumber::new(0), b"msg1")
-            .expect("envelope");
-        let env2: Envelope = Envelope::new(MessageType::new(1), SequenceNumber::new(1), b"msg2")
-            .expect("envelope");
+        let env1: Envelope =
+            Envelope::new(MessageType::new(1), SequenceNumber::new(0), b"msg1").expect("envelope");
+        let env2: Envelope =
+            Envelope::new(MessageType::new(1), SequenceNumber::new(1), b"msg2").expect("envelope");
 
         let ready1 = rx_ring.receive(env1, 0).expect("receive");
         assert_eq!(ready1.len(), 1);
@@ -410,16 +412,16 @@ mod tests {
         let mut rx_ring: RxRing = RxRing::new();
 
         // Receive message 2 before message 1
-        let env2: Envelope = Envelope::new(MessageType::new(1), SequenceNumber::new(1), b"msg2")
-            .expect("envelope");
+        let env2: Envelope =
+            Envelope::new(MessageType::new(1), SequenceNumber::new(1), b"msg2").expect("envelope");
         let ready = rx_ring.receive(env2, 0).expect("receive");
         assert_eq!(ready.len(), 0); // Buffered, not ready
 
         assert_eq!(rx_ring.buffered_count(), 1);
 
         // Now receive message 1
-        let env1: Envelope = Envelope::new(MessageType::new(1), SequenceNumber::new(0), b"msg1")
-            .expect("envelope");
+        let env1: Envelope =
+            Envelope::new(MessageType::new(1), SequenceNumber::new(0), b"msg1").expect("envelope");
         let ready = rx_ring.receive(env1, 0).expect("receive");
         assert_eq!(ready.len(), 2); // Both messages now ready
 
@@ -430,8 +432,8 @@ mod tests {
     fn test_rx_ring_duplicate() {
         let mut rx_ring: RxRing = RxRing::new();
 
-        let env: Envelope = Envelope::new(MessageType::new(1), SequenceNumber::new(0), b"msg")
-            .expect("envelope");
+        let env: Envelope =
+            Envelope::new(MessageType::new(1), SequenceNumber::new(0), b"msg").expect("envelope");
 
         let ready1 = rx_ring.receive(env.clone(), 0).expect("receive");
         assert_eq!(ready1.len(), 1);
@@ -443,8 +445,8 @@ mod tests {
 
     #[test]
     fn test_tx_message_timeout() {
-        let envelope: Envelope = Envelope::new(MessageType::new(1), SequenceNumber::new(0), b"test")
-            .expect("envelope");
+        let envelope: Envelope =
+            Envelope::new(MessageType::new(1), SequenceNumber::new(0), b"test").expect("envelope");
         let mut entry = TxMessageEntry::new(envelope);
 
         entry.mark_sent(1000, 100, 0);

@@ -12,6 +12,6 @@ pub use config::*;
 pub use iface::*;
 pub use link::*;
 pub use request::*;
-pub use resource::{ResourceError, ResourceReceiver, send_resource};
+pub use resource::{send_resource, ResourceError, ResourceReceiver};
 pub use reticulum::*;
 pub use transport::*;

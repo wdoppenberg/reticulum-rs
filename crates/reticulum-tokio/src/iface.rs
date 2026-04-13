@@ -149,8 +149,6 @@ impl InterfaceManager {
 
         let inner = Arc::new(Mutex::new(inner));
 
-        
-
         InterfaceContext::<T> {
             inner: inner.clone(),
             channel,

@@ -117,7 +117,9 @@ pub async fn send_resource(
 
     log::debug!(
         "resource_sender({}): advertised {} bytes, {} parts",
-        link_id, resource.size, parts.len()
+        link_id,
+        resource.size,
+        parts.len()
     );
 
     // Send the initial window of parts.
@@ -128,7 +130,13 @@ pub async fn send_resource(
 
     loop {
         if cancel.is_cancelled() {
-            send_resource_packet(&link, &transport, &[], PacketContext::ResourceInitiatorCancel).await;
+            send_resource_packet(
+                &link,
+                &transport,
+                &[],
+                PacketContext::ResourceInitiatorCancel,
+            )
+            .await;
             resource.status = ResourceStatus::Failed;
             return Err(ResourceError::Cancelled);
         }
@@ -214,7 +222,9 @@ async fn send_window(
         transport.send_packet(packet).await;
         log::trace!(
             "resource_sender({}): sent part {} ({} bytes)",
-            link_id, idx, data.len()
+            link_id,
+            idx,
+            data.len()
         );
     }
     Ok(())
@@ -237,7 +247,9 @@ async fn handle_hash_update_sender(
 
     log::debug!(
         "resource_sender({}): hash update - consecutive={}, missing={}",
-        link_id, consecutive_height, num_missing
+        link_id,
+        consecutive_height,
+        num_missing
     );
 
     resource.adjust_window(num_missing == 0);
@@ -262,7 +274,8 @@ async fn handle_hash_update_sender(
                     transport.send_packet(packet).await;
                     log::trace!(
                         "resource_sender({}): retransmitted part {}",
-                        link_id, part.index
+                        link_id,
+                        part.index
                     );
                 }
                 break;
@@ -319,7 +332,9 @@ impl ResourceReceiver {
 
         log::debug!(
             "resource_receiver({}): incoming {} bytes, {} parts",
-            link_id, resource.size, resource.total_parts
+            link_id,
+            resource.size,
+            resource.total_parts
         );
 
         Ok(Self {
@@ -349,8 +364,7 @@ impl ResourceReceiver {
                 return Err(ResourceError::Timeout);
             }
 
-            let event_result =
-                tokio::time::timeout(POLL_TIMEOUT, event_rx.recv()).await;
+            let event_result = tokio::time::timeout(POLL_TIMEOUT, event_rx.recv()).await;
 
             match event_result {
                 Err(_) => continue,
@@ -374,7 +388,8 @@ impl ResourceReceiver {
                                 Err(e) => {
                                     log::warn!(
                                         "resource_receiver({}): receive_part: {}",
-                                        self.link_id, e
+                                        self.link_id,
+                                        e
                                     );
                                     self.send_hash_update().await;
                                 }
@@ -413,7 +428,8 @@ impl ResourceReceiver {
 
         log::debug!(
             "resource_receiver({}): complete ({} bytes)",
-            self.link_id, data.len()
+            self.link_id,
+            data.len()
         );
 
         Ok(data)
@@ -421,7 +437,9 @@ impl ResourceReceiver {
 
     async fn send_hash_update(&self) {
         let missing = self.resource.get_missing_parts();
-        let consecutive_height = self.resource.consecutive_completed_height
+        let consecutive_height = self
+            .resource
+            .consecutive_completed_height
             .map(|h| h as u16)
             .unwrap_or(0u16);
 
@@ -438,14 +456,27 @@ impl ResourceReceiver {
 
         log::trace!(
             "resource_receiver({}): hash update, {} missing",
-            self.link_id, missing.len()
+            self.link_id,
+            missing.len()
         );
 
-        send_resource_packet(&self.link, &self.transport, &payload, PacketContext::ResourceHashUpdate).await;
+        send_resource_packet(
+            &self.link,
+            &self.transport,
+            &payload,
+            PacketContext::ResourceHashUpdate,
+        )
+        .await;
     }
 
     async fn send_cancel(&self) {
-        send_resource_packet(&self.link, &self.transport, &[], PacketContext::ResourceReceiverCancel).await;
+        send_resource_packet(
+            &self.link,
+            &self.transport,
+            &[],
+            PacketContext::ResourceReceiverCancel,
+        )
+        .await;
     }
 }
 
@@ -465,8 +496,8 @@ fn compute_sdu() -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use reticulum_core::resource::{Resource, ResourceAdvertisement, ResourceFlags};
     use reticulum_core::hash::Hash;
+    use reticulum_core::resource::{Resource, ResourceAdvertisement, ResourceFlags};
 
     #[test]
     fn advertisement_round_trip() {

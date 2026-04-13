@@ -40,9 +40,9 @@
 #[cfg(feature = "alloc")]
 extern crate alloc;
 
-use core::fmt;
-use crate::error::RnsError;
 use crate::buffer::StaticBuffer;
+use crate::error::RnsError;
+use core::fmt;
 
 /// Maximum sequence number (16-bit)
 pub const SEQ_MAX: u16 = 0xFFFF;
@@ -195,7 +195,11 @@ impl<const N: usize> Envelope<N> {
     );
 
     /// Create a new envelope
-    pub fn new(msg_type: MessageType, sequence: SequenceNumber, payload: &[u8]) -> Result<Self, RnsError> {
+    pub fn new(
+        msg_type: MessageType,
+        sequence: SequenceNumber,
+        payload: &[u8],
+    ) -> Result<Self, RnsError> {
         let mut payload_buf = StaticBuffer::new();
         payload_buf.write(payload)?;
 
@@ -381,10 +385,12 @@ mod tests {
         let sequence = SequenceNumber::new(123);
         let payload = b"test payload";
 
-        let envelope: Envelope<MAX_ENVELOPE_SIZE> = Envelope::new(msg_type, sequence, payload).expect("create envelope");
+        let envelope: Envelope<MAX_ENVELOPE_SIZE> =
+            Envelope::new(msg_type, sequence, payload).expect("create envelope");
         let packed = envelope.pack();
 
-        let unpacked: Envelope<MAX_ENVELOPE_SIZE> = Envelope::unpack(packed.as_slice()).expect("unpack envelope");
+        let unpacked: Envelope<MAX_ENVELOPE_SIZE> =
+            Envelope::unpack(packed.as_slice()).expect("unpack envelope");
 
         assert_eq!(unpacked.msg_type, msg_type);
         assert_eq!(unpacked.sequence, sequence);
@@ -393,11 +399,9 @@ mod tests {
 
     #[test]
     fn test_envelope_size() {
-        let envelope: Envelope<MAX_ENVELOPE_SIZE> = Envelope::new(
-            MessageType::new(1),
-            SequenceNumber::new(0),
-            b"hello"
-        ).expect("create envelope");
+        let envelope: Envelope<MAX_ENVELOPE_SIZE> =
+            Envelope::new(MessageType::new(1), SequenceNumber::new(0), b"hello")
+                .expect("create envelope");
 
         assert_eq!(envelope.size(), ENVELOPE_HEADER_SIZE + 5);
     }

@@ -602,20 +602,21 @@ async fn handle_keepalive_response<'a>(
     handler: &MutexGuard<'a, TransportHandler>,
 ) -> bool {
     if packet.context == PacketContext::KeepAlive
-        && packet.data.as_slice()[0] == KEEP_ALIVE_RESPONSE {
-            let lookup = handler.link_table.handle_keepalive(packet);
+        && packet.data.as_slice()[0] == KEEP_ALIVE_RESPONSE
+    {
+        let lookup = handler.link_table.handle_keepalive(packet);
 
-            if let Some((propagated, iface)) = lookup {
-                handler
-                    .send(TxMessage {
-                        tx_type: TxMessageType::Direct(iface),
-                        packet: propagated,
-                    })
-                    .await;
-            }
-
-            return true;
+        if let Some((propagated, iface)) = lookup {
+            handler
+                .send(TxMessage {
+                    tx_type: TxMessageType::Direct(iface),
+                    packet: propagated,
+                })
+                .await;
         }
+
+        return true;
+    }
 
     false
 }
@@ -973,15 +974,14 @@ async fn handle_check_links<'a>(mut handler: MutexGuard<'a, TransportHandler>) {
             link.restart();
         }
 
-        if link.status() == LinkStatus::Pending
-            && link.elapsed() > INTERVAL_OUTPUT_LINK_REPEAT {
-                log::warn!(
-                    "tp({}): repeat link request {}",
-                    handler.config.name,
-                    link.id()
-                );
-                handler.send_packet(link.request()).await;
-            }
+        if link.status() == LinkStatus::Pending && link.elapsed() > INTERVAL_OUTPUT_LINK_REPEAT {
+            log::warn!(
+                "tp({}): repeat link request {}",
+                handler.config.name,
+                link.id()
+            );
+            handler.send_packet(link.request()).await;
+        }
     }
 }
 

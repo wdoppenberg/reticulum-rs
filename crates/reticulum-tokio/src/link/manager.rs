@@ -246,8 +246,6 @@ impl Link {
         packet_data.safe_write(&signature.to_bytes()[..]);
         packet_data.safe_write(self.priv_identity.as_identity().public_key.as_bytes());
 
-        
-
         Packet {
             header: Header {
                 packet_type: PacketType::Proof,
@@ -282,23 +280,33 @@ impl Link {
                 if let Ok(plain_text) = self.decrypt(packet.data.as_slice(), &mut buffer[..]) {
                     log::trace!("link({}): channel data {}B", self.id, plain_text.len());
                     self.request_time = Instant::now();
-                    self.post_event(LinkEvent::ChannelData(LinkPayload::new_from_slice(plain_text)));
+                    self.post_event(LinkEvent::ChannelData(LinkPayload::new_from_slice(
+                        plain_text,
+                    )));
                 } else {
                     log::error!("link({}): can't decrypt channel packet", self.id);
                 }
             }
             ctx @ (PacketContext::Resource
-                | PacketContext::ResourceAdvrtisement
-                | PacketContext::ResourceRequest
-                | PacketContext::ResourceHashUpdate
-                | PacketContext::ResourceProof
-                | PacketContext::ResourceInitiatorCancel
-                | PacketContext::ResourceReceiverCancel) => {
+            | PacketContext::ResourceAdvrtisement
+            | PacketContext::ResourceRequest
+            | PacketContext::ResourceHashUpdate
+            | PacketContext::ResourceProof
+            | PacketContext::ResourceInitiatorCancel
+            | PacketContext::ResourceReceiverCancel) => {
                 let mut buffer = [0u8; PACKET_MDU];
                 if let Ok(plain_text) = self.decrypt(packet.data.as_slice(), &mut buffer[..]) {
-                    log::trace!("link({}): resource data {}B ctx={:?}", self.id, plain_text.len(), ctx);
+                    log::trace!(
+                        "link({}): resource data {}B ctx={:?}",
+                        self.id,
+                        plain_text.len(),
+                        ctx
+                    );
                     self.request_time = Instant::now();
-                    self.post_event(LinkEvent::ResourceData(LinkPayload::new_from_slice(plain_text), ctx));
+                    self.post_event(LinkEvent::ResourceData(
+                        LinkPayload::new_from_slice(plain_text),
+                        ctx,
+                    ));
                 } else {
                     log::error!("link({}): can't decrypt resource packet", self.id);
                 }

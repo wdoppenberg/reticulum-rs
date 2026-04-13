@@ -20,7 +20,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use tokio::sync::{broadcast, mpsc, Mutex};
-use tokio::time::{Duration, sleep};
+use tokio::time::{sleep, Duration};
 use tokio_util::sync::CancellationToken;
 
 use reticulum_core::buffer::StaticBuffer;
@@ -124,14 +124,7 @@ impl Channel {
             let cancel = cancel.clone();
             async move {
                 run_receiver(
-                    link_id,
-                    link,
-                    transport,
-                    tx_ring,
-                    rx_ring,
-                    rtt_ms,
-                    inbound_tx,
-                    event_rx,
+                    link_id, link, transport, tx_ring, rx_ring, rtt_ms, inbound_tx, event_rx,
                     cancel,
                 )
                 .await;
@@ -256,10 +249,7 @@ async fn flush_tx(
     };
 
     for data in to_send {
-        let packet = link
-            .lock()
-            .await
-            .channel_packet(&data)?;
+        let packet = link.lock().await.channel_packet(&data)?;
         transport.send_packet(packet).await;
         log::trace!("channel({}): tx {} bytes", link_id, data.len());
     }
@@ -359,7 +349,11 @@ async fn handle_channel_data(
     let envelope = match Envelope::<MAX_ENVELOPE_SIZE>::unpack(data) {
         Ok(e) => e,
         Err(_) => {
-            log::warn!("channel({}): failed to unpack envelope ({} bytes)", link_id, data.len());
+            log::warn!(
+                "channel({}): failed to unpack envelope ({} bytes)",
+                link_id,
+                data.len()
+            );
             return;
         }
     };
@@ -396,7 +390,10 @@ async fn handle_channel_data(
         };
         if inbound_tx.send(msg).await.is_err() {
             // Receiver was dropped; shut down.
-            log::debug!("channel({}): inbound queue closed, stopping receiver", link_id);
+            log::debug!(
+                "channel({}): inbound queue closed, stopping receiver",
+                link_id
+            );
             return;
         }
         // Send ACK for each delivered message.
@@ -431,7 +428,9 @@ async fn run_retransmit(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use reticulum_core::channel::types::{Envelope, MessageType, SequenceNumber, MAX_ENVELOPE_SIZE};
+    use reticulum_core::channel::types::{
+        Envelope, MessageType, SequenceNumber, MAX_ENVELOPE_SIZE,
+    };
 
     #[test]
     fn ack_envelope_round_trips() {

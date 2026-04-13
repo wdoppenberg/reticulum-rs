@@ -67,10 +67,7 @@ impl RequestReceipt {
     }
 
     /// Wait for response with timeout
-    pub async fn wait_with_timeout(
-        mut self,
-        timeout: Duration,
-    ) -> Result<ResponseData, String> {
+    pub async fn wait_with_timeout(mut self, timeout: Duration) -> Result<ResponseData, String> {
         if let Some(rx) = self.response_rx.take() {
             tokio::time::timeout(timeout, rx)
                 .await
@@ -194,8 +191,7 @@ impl Default for RequestManager {
 }
 
 /// Request handler function type
-pub type RequestHandler =
-    Arc<dyn Fn(RequestContext) -> Option<Vec<u8>> + Send + Sync + 'static>;
+pub type RequestHandler = Arc<dyn Fn(RequestContext) -> Option<Vec<u8>> + Send + Sync + 'static>;
 
 /// Internal entry stored per registered path.
 struct HandlerEntry {
@@ -273,7 +269,8 @@ impl RequestHandlerRegistry {
                     if !entry.allowed_identities.contains(&requester_hash) {
                         log::warn!(
                             "Request to {} denied by AllowList: {} is not in the allow-list",
-                            context.path, requester_hash
+                            context.path,
+                            requester_hash
                         );
                         return None;
                     }

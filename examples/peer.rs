@@ -7,7 +7,6 @@
 ///
 /// Each peer announces itself every 3 seconds and prints any announce it
 /// receives from the other side.
-
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -65,7 +64,10 @@ async fn main() {
         .add_destination(identity, DestinationName::new("example", "peer"))
         .await;
 
-    println!("[{mode}] My address: {}", dest.lock().await.desc.address_hash);
+    println!(
+        "[{mode}] My address: {}",
+        dest.lock().await.desc.address_hash
+    );
 
     // Subscribe to incoming announces before starting to send, so none are
     // missed if the connection is already live.

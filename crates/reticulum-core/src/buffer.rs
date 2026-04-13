@@ -116,7 +116,10 @@ impl<const N: usize> StaticBuffer<N> {
     }
 
     /// Deprecated: use [`acquire_buf`](Self::acquire_buf) instead.
-    #[deprecated(since = "0.1.1", note = "use acquire_buf (fixes bounds check and spelling)")]
+    #[deprecated(
+        since = "0.1.1",
+        note = "use acquire_buf (fixes bounds check and spelling)"
+    )]
     pub fn accuire_buf(&mut self, len: usize) -> &mut [u8] {
         self.len = len;
         &mut self.buffer[..self.len]

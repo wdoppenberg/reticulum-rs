@@ -129,7 +129,6 @@ pub enum ResourceStatus {
     Corrupt = 0x08,
 }
 
-
 /// Resource flags for advertisement
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ResourceFlags {
@@ -278,7 +277,10 @@ impl ResourceAdvertisement {
         offset += RANDOM_HASH_SIZE;
 
         // Hashmap (variable length, up to HASHMAP_MAX_LEN)
-        let hashmap_len = data.len().saturating_sub(offset + 5).min(Self::HASHMAP_MAX_LEN);
+        let hashmap_len = data
+            .len()
+            .saturating_sub(offset + 5)
+            .min(Self::HASHMAP_MAX_LEN);
         let hashmap = data[offset..offset + hashmap_len].to_vec();
         offset += hashmap_len;
 
@@ -626,8 +628,8 @@ impl Resource {
 
         // Find matching hash in hashmap, starting from the first unreceived part.
         let consecutive_index = match self.consecutive_completed_height {
-            Some(h) => h,   // search from the last delivered part onward
-            None => 0,      // nothing delivered yet — start from the beginning
+            Some(h) => h, // search from the last delivered part onward
+            None => 0,    // nothing delivered yet — start from the beginning
         };
 
         for i in consecutive_index..(consecutive_index + self.window).min(self.hashmap.len()) {
@@ -640,7 +642,10 @@ impl Resource {
 
                     // Update consecutive completed height: advance if this part
                     // immediately follows the current frontier, then keep going.
-                    let frontier = self.consecutive_completed_height.map(|h| h + 1).unwrap_or(0);
+                    let frontier = self
+                        .consecutive_completed_height
+                        .map(|h| h + 1)
+                        .unwrap_or(0);
                     if i == frontier {
                         self.consecutive_completed_height = Some(i);
                         let mut cp = i + 1;
@@ -888,7 +893,11 @@ mod tests {
         // Should have 2 missing parts (1 and 3)
         // But consecutive_completed_height advances, so part 2 might not be stored if part 1 wasn't received first
         // Let's just verify we have some missing parts
-        assert!(!missing.is_empty(), "Should have at least 1 missing part, got: {:?}", missing);
+        assert!(
+            !missing.is_empty(),
+            "Should have at least 1 missing part, got: {:?}",
+            missing
+        );
     }
 
     #[test]

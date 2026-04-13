@@ -178,15 +178,15 @@ impl SamConn<sam_state::HelloDone> {
         destination: Option<&str>,
     ) -> Result<SamConn<sam_state::SessionReady>, SamError> {
         let dest_field = destination.unwrap_or("TRANSIENT");
-        let cmd = format!(
-            "SESSION CREATE STYLE=STREAM ID={session_id} DESTINATION={dest_field}\n"
-        );
+        let cmd = format!("SESSION CREATE STYLE=STREAM ID={session_id} DESTINATION={dest_field}\n");
         self.stream.write_all(cmd.as_bytes()).await?;
         self.stream.flush().await?;
 
         let reply = read_line(&mut self.stream).await?;
         if !reply.contains("RESULT=OK") {
-            return Err(SamError::Protocol(format!("SESSION CREATE failed: {reply}")));
+            return Err(SamError::Protocol(format!(
+                "SESSION CREATE failed: {reply}"
+            )));
         }
 
         let our_destination = extract_field(&reply, "DESTINATION")
@@ -224,10 +224,7 @@ impl SamConn<sam_state::SessionReady> {
         remote_dest: &str,
     ) -> Result<SamConn<sam_state::DataPipe>, SamError> {
         // SAM STREAM protocol requires a fresh TCP connection for each stream.
-        let mut pipe = SamConn::connect(&self.sam_addr)
-            .await?
-            .hello()
-            .await?;
+        let mut pipe = SamConn::connect(&self.sam_addr).await?.hello().await?;
 
         let cmd = format!(
             "STREAM CONNECT ID={} DESTINATION={remote_dest} SILENT=false\n",
@@ -257,23 +254,15 @@ impl SamConn<sam_state::SessionReady> {
     /// Open a **new** SAM connection and issue `STREAM ACCEPT` to receive the
     /// next incoming stream on this session.
     async fn stream_accept(&self) -> Result<SamConn<sam_state::DataPipe>, SamError> {
-        let mut pipe = SamConn::connect(&self.sam_addr)
-            .await?
-            .hello()
-            .await?;
+        let mut pipe = SamConn::connect(&self.sam_addr).await?.hello().await?;
 
-        let cmd = format!(
-            "STREAM ACCEPT ID={} SILENT=false\n",
-            self.state.session_id
-        );
+        let cmd = format!("STREAM ACCEPT ID={} SILENT=false\n", self.state.session_id);
         pipe.stream.write_all(cmd.as_bytes()).await?;
         pipe.stream.flush().await?;
 
         let reply = read_line(&mut pipe.stream).await?;
         if !reply.contains("RESULT=OK") {
-            return Err(SamError::Protocol(format!(
-                "STREAM ACCEPT failed: {reply}"
-            )));
+            return Err(SamError::Protocol(format!("STREAM ACCEPT failed: {reply}")));
         }
 
         // After RESULT=OK the next line from the SAM bridge is the remote

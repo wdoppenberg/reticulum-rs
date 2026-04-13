@@ -34,14 +34,20 @@ fn multicast_addr_matches_python_formula() {
     expected[0] = 0xFF;
     expected[1] = 0x02;
     expected[2..].copy_from_slice(&hash[..14]);
-    assert_eq!(AutoInterface::multicast_addr(b"reticulum").octets(), expected);
+    assert_eq!(
+        AutoInterface::multicast_addr(b"reticulum").octets(),
+        expected
+    );
 }
 
 #[test]
 fn multicast_addr_differs_per_group() {
     let a = AutoInterface::multicast_addr(b"reticulum");
     let b = AutoInterface::multicast_addr(b"other_group");
-    assert_ne!(a, b, "distinct group IDs must produce distinct multicast addresses");
+    assert_ne!(
+        a, b,
+        "distinct group IDs must produce distinct multicast addresses"
+    );
 }
 
 #[test]
@@ -96,8 +102,8 @@ fn discovery_token_matches_python_formula() {
 #[tokio::test]
 #[ignore = "requires IPv6 multicast on loopback; run with --include-ignored"]
 async fn two_nodes_discover_each_other() {
-    use reticulum_tokio::iface::{InterfaceManager, TxMessage, TxMessageType};
     use reticulum_core::packet::Packet;
+    use reticulum_tokio::iface::{InterfaceManager, TxMessage, TxMessageType};
     use std::sync::Arc;
     use tokio::sync::Mutex;
 
@@ -138,13 +144,10 @@ async fn two_nodes_discover_each_other() {
         .await;
 
     let rx_b = mgr_b.receiver();
-    let result = tokio::time::timeout(
-        Duration::from_secs(3),
-        async {
-            let mut lock = rx_b.lock().await;
-            lock.recv().await
-        },
-    )
+    let result = tokio::time::timeout(Duration::from_secs(3), async {
+        let mut lock = rx_b.lock().await;
+        lock.recv().await
+    })
     .await;
 
     assert!(
@@ -181,17 +184,13 @@ fn destination_hash_matches_python_vector() {
         }
     };
 
-    let raw = std::fs::read_to_string(&path)
-        .expect("read vector file");
-    let v: serde_json::Value = serde_json::from_str(&raw)
-        .expect("parse vector JSON");
+    let raw = std::fs::read_to_string(&path).expect("read vector file");
+    let v: serde_json::Value = serde_json::from_str(&raw).expect("parse vector JSON");
 
     let expected_dest_hash = v["destination_hash_hex"]
         .as_str()
         .expect("destination_hash_hex");
-    let expected_name_hash = v["name_hash_hex"]
-        .as_str()
-        .expect("name_hash_hex");
+    let expected_name_hash = v["name_hash_hex"].as_str().expect("name_hash_hex");
     let app_name = v["app_name"].as_str().expect("app_name");
     let aspect = v["aspect"].as_str().expect("aspect");
     let pub_key_hex = v["public_key_hex"].as_str().expect("public_key_hex");

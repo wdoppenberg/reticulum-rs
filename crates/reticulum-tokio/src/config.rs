@@ -443,8 +443,8 @@ loglevel = 4
 
     /// Save configuration to a TOML file
     pub fn to_file<P: AsRef<Path>>(&self, path: P) -> Result<(), ConfigError> {
-        let contents = toml::to_string_pretty(self)
-            .map_err(|e| ConfigError::Validation(e.to_string()))?;
+        let contents =
+            toml::to_string_pretty(self).map_err(|e| ConfigError::Validation(e.to_string()))?;
         fs::write(path, contents)?;
         Ok(())
     }

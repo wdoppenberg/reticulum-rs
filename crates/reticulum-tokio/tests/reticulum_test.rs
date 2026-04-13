@@ -21,9 +21,7 @@ async fn build_node(tag: &str, config_toml: &str) -> Reticulum<reticulum_tokio::
     paths.create_directories().expect("create dirs");
     std::fs::write(&paths.config_path, config_toml).expect("write config");
 
-    let node = Reticulum::new_with_paths(paths)
-        .await
-        .expect("new node");
+    let node = Reticulum::new_with_paths(paths).await.expect("new node");
     node.start().await.expect("start node")
 }
 

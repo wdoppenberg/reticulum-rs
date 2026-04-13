@@ -91,7 +91,12 @@ impl Packet {
             data: StaticBuffer::new(),
         };
 
-        buffer.read(packet.data.acquire_buf(buffer.bytes_left()).map_err(|_| RnsError::OutOfMemory)?)? ;
+        buffer.read(
+            packet
+                .data
+                .acquire_buf(buffer.bytes_left())
+                .map_err(|_| RnsError::OutOfMemory)?,
+        )?;
 
         Ok(packet)
     }

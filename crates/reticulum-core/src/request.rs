@@ -279,8 +279,14 @@ mod tests {
         let link_id = LinkId::new_empty();
         let remote_identity = Identity::default();
 
-        let context =
-            RequestContext::new(path, data.clone(), request_id, link_id, remote_identity, 12345);
+        let context = RequestContext::new(
+            path,
+            data.clone(),
+            request_id,
+            link_id,
+            remote_identity,
+            12345,
+        );
 
         assert_eq!(context.path, path);
         assert_eq!(context.data, data);
