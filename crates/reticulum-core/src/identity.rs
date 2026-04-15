@@ -1,3 +1,4 @@
+#[cfg(feature = "alloc")]
 use alloc::fmt::Write;
 use hkdf::Hkdf;
 use rand_core::CryptoRngCore;
@@ -119,8 +120,9 @@ impl Identity {
         Self::new_from_slices(&public_key_bytes[..], &verifying_key_bytes[..])
     }
 
-    pub fn to_hex_string(&self) -> String {
-        let mut hex_string = String::with_capacity((PUBLIC_KEY_LENGTH * 2) * 2);
+    #[cfg(feature = "alloc")]
+    pub fn to_hex_string(&self) -> alloc::string::String {
+        let mut hex_string = alloc::string::String::with_capacity((PUBLIC_KEY_LENGTH * 2) * 2);
 
         for byte in self.public_key.as_bytes() {
             write!(&mut hex_string, "{:02x}", byte).unwrap();
@@ -327,8 +329,9 @@ impl PrivateIdentity {
         &self.identity.address_hash
     }
 
-    pub fn to_hex_string(&self) -> String {
-        let mut hex_string = String::with_capacity((PUBLIC_KEY_LENGTH * 2) * 2);
+    #[cfg(feature = "alloc")]
+    pub fn to_hex_string(&self) -> alloc::string::String {
+        let mut hex_string = alloc::string::String::with_capacity((PUBLIC_KEY_LENGTH * 2) * 2);
 
         for byte in self.private_key.as_bytes() {
             write!(&mut hex_string, "{:02x}", byte).unwrap();

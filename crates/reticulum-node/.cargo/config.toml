@@ -1,0 +1,20 @@
+# Build configuration for the nRF52840 (Cortex-M4F) target.
+# Applies only when building the target-nrf52840 binary.
+
+[build]
+# Default target when no --target flag is given.
+target = "thumbv7em-none-eabihf"
+
+[target.thumbv7em-none-eabihf]
+# Use probe-rs as the default runner for `cargo run`.
+runner = "probe-rs run --chip nRF52840_xxAA"
+
+rustflags = [
+    # Place the linker scripts in the search path.
+    "-C", "link-arg=-Tlink.x",
+    "-C", "link-arg=-Tdefmt.x",
+]
+
+[env]
+# Ensure defmt log level is set to debug during development.
+DEFMT_LOG = "debug"

@@ -35,11 +35,6 @@
 //! timeout = (1.5 ^ (tries - 1)) × max(RTT × 2.5, 25ms) × (tx_ring_size + 1.5)
 //! ```
 
-#![cfg_attr(not(feature = "alloc"), no_std)]
-
-#[cfg(feature = "alloc")]
-extern crate alloc;
-
 use crate::buffer::StaticBuffer;
 use crate::error::RnsError;
 use core::fmt;

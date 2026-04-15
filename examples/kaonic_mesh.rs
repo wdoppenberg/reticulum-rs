@@ -17,14 +17,13 @@ async fn main() {
 
     let transport = Arc::new(Mutex::new(Transport::new(config)));
 
-    let _ = transport.lock().await.iface_manager().lock().await.spawn(
-        KaonicGrpc::new(
-            "http://127.0.0.1:8080",
-            RadioConfig::new_for_module(RadioModule::RadioA),
-            None,
-        ),
-        KaonicGrpc::spawn,
-    );
+    let cancel = tokio_util::sync::CancellationToken::new();
+    KaonicGrpc::new(
+        "http://127.0.0.1:8080",
+        RadioConfig::new_for_module(RadioModule::RadioA),
+        None,
+    )
+    .register(&mut *transport.lock().await.iface_manager().lock().await, cancel);
 
     let _ = tokio::signal::ctrl_c().await;
 }

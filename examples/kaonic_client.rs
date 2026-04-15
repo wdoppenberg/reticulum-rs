@@ -27,14 +27,13 @@ async fn main() {
 
     log::info!("start kaonic client");
 
-    let _ = transport.lock().await.iface_manager().lock().await.spawn(
-        KaonicGrpc::new(
-            format!("http://{}", grpc_addr),
-            RadioConfig::new_for_module(RadioModule::RadioA),
-            None,
-        ),
-        KaonicGrpc::spawn,
-    );
+    let cancel = tokio_util::sync::CancellationToken::new();
+    KaonicGrpc::new(
+        format!("http://{}", grpc_addr),
+        RadioConfig::new_for_module(RadioModule::RadioA),
+        None,
+    )
+    .register(&mut *transport.lock().await.iface_manager().lock().await, cancel);
 
     let identity = PrivateIdentity::new_from_name("kaonic-example");
 

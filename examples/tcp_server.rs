@@ -15,10 +15,9 @@ async fn main() {
         true,
     ));
 
-    let _ = transport.iface_manager().lock().await.spawn(
-        TcpServer::new("0.0.0.0:4242", transport.iface_manager()),
-        TcpServer::spawn,
-    );
+    let mgr = transport.iface_manager().clone();
+    let cancel = tokio_util::sync::CancellationToken::new();
+    tokio::spawn(async move { TcpServer::new("0.0.0.0:4242").run(mgr, cancel).await });
 
     let _ = tokio::signal::ctrl_c().await;
 

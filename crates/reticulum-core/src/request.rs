@@ -35,6 +35,7 @@
 //! );
 //! ```
 
+#[cfg(feature = "alloc")]
 use core::time::Duration;
 
 use crate::{hash::Hash, identity::Identity, link::LinkId};
@@ -88,34 +89,56 @@ pub enum RequestStatus {
     Failed,
 }
 
-/// Core request data structure (no_std compatible)
+/// Core request data structure.
+///
+/// The `path` field is only stored when the `alloc` feature is enabled.  On
+/// `no_alloc` targets the request can still be identified by its [`id`]
+/// (a hash of the path), which is always present.
+///
+/// [`id`]: RequestData::id
 #[derive(Debug, Clone)]
 pub struct RequestData {
-    /// Request identifier
+    /// Request identifier (hash of the path)
     pub id: RequestId,
-    /// Request path
+    /// Request path — only available with the `alloc` feature.
     #[cfg(feature = "alloc")]
     pub path: alloc::string::String,
     /// Link over which the request was sent
     pub link_id: LinkId,
-    /// Timestamp when request was sent (in milliseconds since epoch)
+    /// Timestamp when request was sent (milliseconds since epoch)
     pub sent_at: u64,
-    /// Request timeout duration (in milliseconds)
+    /// Request timeout duration (milliseconds)
     pub timeout_ms: u64,
     /// Current status of the request
     pub status: RequestStatus,
 }
 
 impl RequestData {
-    /// Create a new request
+    /// Create a new request (heap-allocated path storage).
     #[cfg(feature = "alloc")]
     pub fn new(path: &str, link_id: LinkId, timeout: Duration) -> Self {
         Self {
             id: RequestId::from_path(path),
             path: alloc::string::String::from(path),
             link_id,
-            sent_at: 0, // Should be set by runtime when actually sent
+            sent_at: 0,
             timeout_ms: timeout.as_millis() as u64,
+            status: RequestStatus::Pending,
+        }
+    }
+
+    /// Create a new request without storing the path string.
+    ///
+    /// Available on all targets (including `no_alloc`).  The path is hashed to
+    /// produce the [`RequestId`] but is not retained.
+    pub fn new_from_path(path: &str, link_id: LinkId, timeout_ms: u64) -> Self {
+        Self {
+            id: RequestId::from_path(path),
+            #[cfg(feature = "alloc")]
+            path: alloc::string::String::from(path),
+            link_id,
+            sent_at: 0,
+            timeout_ms,
             status: RequestStatus::Pending,
         }
     }
@@ -149,32 +172,42 @@ impl RequestData {
 pub struct ResponseData {
     /// Request ID this response is for
     pub request_id: RequestId,
-    /// Response payload
+    /// Response payload — only available with the `alloc` feature.
     #[cfg(feature = "alloc")]
     pub data: Vec<u8>,
-    /// Timestamp when response was received (in milliseconds since epoch)
+    /// Timestamp when response was received (milliseconds since epoch)
     pub received_at: u64,
 }
 
 #[cfg(feature = "alloc")]
 impl ResponseData {
-    /// Create a new response
     pub fn new(request_id: RequestId, data: Vec<u8>) -> Self {
         Self {
             request_id,
             data,
-            received_at: 0, // Should be set by runtime when received
+            received_at: 0,
         }
     }
 }
 
-/// Request handler context - information passed to request handlers
+#[cfg(not(feature = "alloc"))]
+impl ResponseData {
+    /// Create a response without a payload (no_alloc path).
+    pub fn new_empty(request_id: RequestId) -> Self {
+        Self {
+            request_id,
+            received_at: 0,
+        }
+    }
+}
+
+/// Request handler context — information passed to request handlers.
 #[derive(Clone)]
 pub struct RequestContext {
-    /// Request path
+    /// Request path — only available with the `alloc` feature.
     #[cfg(feature = "alloc")]
     pub path: alloc::string::String,
-    /// Request data payload
+    /// Request data payload — only available with the `alloc` feature.
     #[cfg(feature = "alloc")]
     pub data: Option<Vec<u8>>,
     /// Request identifier
@@ -183,13 +216,12 @@ pub struct RequestContext {
     pub link_id: LinkId,
     /// Remote peer's identity
     pub remote_identity: Identity,
-    /// Timestamp when request was received (in milliseconds since epoch)
+    /// Timestamp when request was received (milliseconds since epoch)
     pub requested_at: u64,
 }
 
 #[cfg(feature = "alloc")]
 impl RequestContext {
-    /// Create a new request context
     pub fn new(
         path: &str,
         data: Option<Vec<u8>>,
@@ -201,6 +233,24 @@ impl RequestContext {
         Self {
             path: alloc::string::String::from(path),
             data,
+            request_id,
+            link_id,
+            remote_identity,
+            requested_at,
+        }
+    }
+}
+
+#[cfg(not(feature = "alloc"))]
+impl RequestContext {
+    /// Create a request context without path/data storage (no_alloc path).
+    pub fn new(
+        request_id: RequestId,
+        link_id: LinkId,
+        remote_identity: Identity,
+        requested_at: u64,
+    ) -> Self {
+        Self {
             request_id,
             link_id,
             remote_identity,

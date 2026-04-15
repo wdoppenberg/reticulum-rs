@@ -114,22 +114,21 @@ async fn two_nodes_discover_each_other() {
     let mut mgr_a = InterfaceManager::new(64);
     let mut mgr_b = InterfaceManager::new(64);
 
-    let _addr_a = mgr_a.spawn(
-        AutoInterface::new(
-            Some("test_group".to_string()),
-            Some(DISC_PORT),
-            Some(DATA_PORT),
-        ),
-        AutoInterface::spawn,
-    );
-    let _addr_b = mgr_b.spawn(
-        AutoInterface::new(
-            Some("test_group".to_string()),
-            Some(DISC_PORT),
-            Some(DATA_PORT),
-        ),
-        AutoInterface::spawn,
-    );
+    let iface_a = AutoInterface::connect(
+        Some("test_group".to_string()),
+        Some(DISC_PORT),
+        Some(DATA_PORT),
+    )
+    .expect("auto_a");
+    let _addr_a = mgr_a.spawn_interface(iface_a);
+
+    let iface_b = AutoInterface::connect(
+        Some("test_group".to_string()),
+        Some(DISC_PORT),
+        Some(DATA_PORT),
+    )
+    .expect("auto_b");
+    let _addr_b = mgr_b.spawn_interface(iface_b);
 
     // Allow up to 4 announce intervals (4 × 1.6 s = 6.4 s) for discovery.
     tokio::time::sleep(Duration::from_secs(7)).await;

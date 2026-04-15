@@ -1,0 +1,73 @@
+[package]
+name = "reticulum-node"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+license = "MIT"
+repository = "https://github.com/wdoppenberg/reticulum-rs"
+categories = ["network-programming", "no-std", "embedded"]
+keywords = ["reticulum", "mesh", "lora", "no-std", "rnode"]
+
+description = """
+Implementation for the Reticulum Network Stack for embedded targets.
+"""
+
+[dependencies]
+# ── Core protocol ──────────────────────────────────────────────────────────────
+reticulum-core = { path = "../reticulum-core", version = "0.1.0", default-features = false, features = ["heapless"] }
+
+# ── Logging (always available — no_std compatible) ────────────────────────────
+log = { version = "0.4", default-features = false }
+
+# ── Embassy interface layer ────────────────────────────────────────────────────
+reticulum-embassy = { path = "../reticulum-embassy", version = "0.1.0", default-features = false, optional = true }
+
+# ── Stack-allocated collections ────────────────────────────────────────────────
+heapless = { version = "0.8", default-features = false }
+
+# ── Embedded flash storage ─────────────────────────────────────────────────────
+embedded-storage = { version = "0.3", default-features = false, optional = true }
+
+# ── RNG (required by storage::load_or_generate and identity generation) ────────
+rand_core = { version = "0.6", default-features = false, optional = true }
+defmt = { version = "0.3", default-features = false, optional = true }
+
+# ── Embassy core — only needed when building the async node runner ─────────────
+embassy-sync    = { version = "0.6",  default-features = false, optional = true }
+embassy-time    = { version = "0.3",  default-features = false, optional = true }
+embassy-futures = { version = "0.1",  default-features = false, optional = true }
+
+# ── LoRa radio driver (SX126x) ─────────────────────────────────────────────────
+lora-phy          = { version = "3.0.1", default-features = false, optional = true }
+embedded-io-async = { version = "0.6.1", default-features = false, optional = true }
+
+[features]
+default = []
+
+# Enables the async node runner (requires Embassy sync + time primitives).
+embassy = [
+    "dep:reticulum-embassy",
+    "dep:embassy-sync",
+    "dep:embassy-time",
+    "dep:embassy-futures",
+    "reticulum-embassy/embassy-time",
+]
+
+# Enables LoraInterface — wraps lora-phy SX126x driver.
+lora = [
+    "dep:lora-phy",
+    "dep:embedded-io-async",
+]
+
+# Enables embedded-storage identity persistence helpers.
+storage = ["dep:embedded-storage", "dep:rand_core", "reticulum-core/alloc", "alloc"]
+
+# Internal: re-exported alloc availability flag (mirrors reticulum-core/alloc).
+alloc = ["reticulum-core/alloc"]
+
+# Use defmt for logging instead of log.
+defmt = ["dep:defmt"]
+
+[dev-dependencies]
+rand_core = { version = "0.6", features = ["getrandom"] }
+embedded-storage = { version = "0.3" }

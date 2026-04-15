@@ -1,22 +1,44 @@
 //! Channel state machine - TX/RX rings and message tracking
 //!
 //! This module implements the sliding window protocol with TX and RX rings.
+//!
+//! # Feature flags
+//!
+//! | Feature    | Backing storage            | Notes                              |
+//! |------------|----------------------------|------------------------------------|
+//! | `alloc`    | `VecDeque` / `BTreeMap`    | Heap-allocated, dynamically sized  |
+//! | `heapless` | `heapless::Deque` / `FnvIndexMap` | Stack-allocated, const-generic |
+//!
+//! When both features are enabled `alloc` takes precedence.
+//!
+//! For `no_alloc` targets enable `heapless` and disable `alloc`:
+//! ```toml
+//! reticulum-core = { default-features = false, features = ["heapless"] }
+//! ```
+//!
+//! ## Out-of-order buffer capacity (`OOO`)
+//!
+//! When using the `heapless` feature, `RxRing<N, OOO>` requires `OOO` to be
+//! a power of two (enforced by `heapless::FnvIndexMap`).
 
+#[cfg(any(feature = "alloc", feature = "heapless"))]
 use super::types::*;
+#[cfg(any(feature = "alloc", feature = "heapless"))]
 use crate::error::RnsError;
 
+#[cfg(feature = "alloc")]
+use alloc::collections::BTreeMap;
 #[cfg(feature = "alloc")]
 use alloc::collections::VecDeque;
 #[cfg(feature = "alloc")]
 use alloc::vec::Vec;
 
-#[cfg(feature = "alloc")]
-extern crate std;
-#[cfg(feature = "alloc")]
-use std::collections::HashMap;
+// ──────────────────────────────────────────────────────────────────────────────
+// TxMessageEntry
+// ──────────────────────────────────────────────────────────────────────────────
 
 /// Message entry in TX ring with state tracking
-#[cfg(feature = "alloc")]
+#[cfg(any(feature = "alloc", feature = "heapless"))]
 #[derive(Debug, Clone)]
 pub struct TxMessageEntry<const N: usize = MAX_ENVELOPE_SIZE> {
     /// The envelope to send
@@ -32,14 +54,13 @@ pub struct TxMessageEntry<const N: usize = MAX_ENVELOPE_SIZE> {
     pub timeout_ms: u32,
 }
 
+#[cfg(any(feature = "alloc", feature = "heapless"))]
 impl<const N: usize> TxMessageEntry<N> {
     /// Observe the current state without being able to mutate it directly.
     pub fn state(&self) -> MessageState {
         self.state
     }
-}
 
-impl<const N: usize> TxMessageEntry<N> {
     pub fn new(envelope: Envelope<N>) -> Self {
         Self {
             envelope,
@@ -96,14 +117,19 @@ impl<const N: usize> TxMessageEntry<N> {
     }
 }
 
+// ──────────────────────────────────────────────────────────────────────────────
+// RxMessageEntry
+// ──────────────────────────────────────────────────────────────────────────────
+
 /// RX message entry for tracking received messages
-#[cfg(feature = "alloc")]
+#[cfg(any(feature = "alloc", feature = "heapless"))]
 #[derive(Debug, Clone)]
 pub struct RxMessageEntry<const N: usize = MAX_ENVELOPE_SIZE> {
     pub envelope: Envelope<N>,
     pub received_ms: u64,
 }
 
+#[cfg(any(feature = "alloc", feature = "heapless"))]
 impl<const N: usize> RxMessageEntry<N> {
     pub fn new(envelope: Envelope<N>, received_ms: u64) -> Self {
         Self {
@@ -113,31 +139,56 @@ impl<const N: usize> RxMessageEntry<N> {
     }
 }
 
-/// TX Ring - Manages outgoing messages with sliding window
-#[cfg(feature = "alloc")]
-pub struct TxRing<const N: usize = MAX_ENVELOPE_SIZE> {
-    /// Ring buffer of messages awaiting acknowledgment
+// ──────────────────────────────────────────────────────────────────────────────
+// TxRing
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// TX Ring — manages outgoing messages with a sliding window protocol.
+///
+/// `N` is the maximum envelope size in bytes.
+/// `W` is the ring's backing capacity (must be ≥ the link-speed max window).
+/// When using the `alloc` feature `W` is still the compile-time maximum; the
+/// runtime window grows up to `min(W, link_speed.max_window())`.
+#[cfg(any(feature = "alloc", feature = "heapless"))]
+pub struct TxRing<const N: usize = MAX_ENVELOPE_SIZE, const W: usize = WINDOW_MAX_FAST> {
+    #[cfg(feature = "alloc")]
     ring: VecDeque<TxMessageEntry<N>>,
+    #[cfg(all(not(feature = "alloc"), feature = "heapless"))]
+    ring: heapless::Deque<TxMessageEntry<N>, W>,
+
     /// Next sequence number to assign
     next_seq: SequenceNumber,
-    /// Current window size
+    /// Current (adaptive) window size
     window_size: usize,
-    /// Maximum window size
+    /// Maximum window size (capped by `W` for heapless)
     window_max: usize,
     /// Minimum window size
     window_min: usize,
-    /// Sequence number of next message to be acknowledged
+    /// Sequence number of the oldest unacknowledged message
     next_ack_seq: SequenceNumber,
 }
 
-#[cfg(feature = "alloc")]
-impl<const N: usize> TxRing<N> {
+#[cfg(any(feature = "alloc", feature = "heapless"))]
+impl<const N: usize, const W: usize> TxRing<N, W> {
     pub fn new(link_speed: LinkSpeed) -> Self {
+        let window_max = {
+            let lsmax = link_speed.max_window();
+            // For heapless, cap at W so we never exceed backing capacity.
+            if lsmax > W {
+                W
+            } else {
+                lsmax
+            }
+        };
         Self {
+            #[cfg(feature = "alloc")]
             ring: VecDeque::new(),
+            #[cfg(all(not(feature = "alloc"), feature = "heapless"))]
+            ring: heapless::Deque::new(),
+
             next_seq: SequenceNumber::zero(),
             window_size: WINDOW_INITIAL,
-            window_max: link_speed.max_window(),
+            window_max,
             window_min: link_speed.min_window_limit(),
             next_ack_seq: SequenceNumber::zero(),
         }
@@ -159,39 +210,64 @@ impl<const N: usize> TxRing<N> {
         let envelope = Envelope::new(msg_type, seq, payload)?;
         let entry = TxMessageEntry::new(envelope);
 
+        #[cfg(feature = "alloc")]
         self.ring.push_back(entry);
-        self.next_seq.increment();
 
+        #[cfg(all(not(feature = "alloc"), feature = "heapless"))]
+        self.ring
+            .push_back(entry)
+            .map_err(|_| RnsError::WindowFull)?;
+
+        self.next_seq.increment();
         Ok(seq)
     }
 
-    /// Get messages ready to send (not sent or timed out)
-    ///
-    /// Returns sequence numbers of messages to send
-    pub fn messages_to_send(&self, current_time_ms: u64) -> Vec<SequenceNumber> {
-        self.ring
-            .iter()
-            .filter(|entry| match entry.state {
-                MessageState::New => true,
-                MessageState::Sent => entry.is_timed_out(current_time_ms) && entry.can_retry(),
-                _ => false,
-            })
-            .map(|entry| entry.envelope.sequence)
-            .collect()
-    }
-
-    /// Get mutable reference to an entry by sequence number
+    /// Get mutable reference to an entry by sequence number.
     pub fn get_mut(&mut self, seq: SequenceNumber) -> Option<&mut TxMessageEntry<N>> {
         self.ring.iter_mut().find(|e| e.envelope.sequence == seq)
     }
 
-    /// Acknowledge a message by sequence number
+    /// Invoke `f` for every sequence number that is ready to (re-)send.
+    ///
+    /// This is the allocation-free alternative to [`messages_to_send`].
+    ///
+    /// [`messages_to_send`]: Self::messages_to_send
+    pub fn for_each_pending<F>(&self, current_time_ms: u64, mut f: F)
+    where
+        F: FnMut(SequenceNumber),
+    {
+        for entry in self.ring.iter() {
+            let ready = match entry.state {
+                MessageState::New => true,
+                MessageState::Sent => entry.is_timed_out(current_time_ms) && entry.can_retry(),
+                _ => false,
+            };
+            if ready {
+                f(entry.envelope.sequence);
+            }
+        }
+    }
+
+    /// Collect sequence numbers ready to (re-)send into a `Vec`.
+    ///
+    /// Requires the `alloc` feature.  For `no_alloc` use [`for_each_pending`].
+    ///
+    /// [`for_each_pending`]: Self::for_each_pending
+    #[cfg(feature = "alloc")]
+    pub fn messages_to_send(&self, current_time_ms: u64) -> Vec<SequenceNumber> {
+        let mut out = Vec::new();
+        self.for_each_pending(current_time_ms, |seq| out.push(seq));
+        out
+    }
+
+    /// Acknowledge a message by sequence number.
+    ///
+    /// Returns `true` if the sequence was found and delivered.
     pub fn acknowledge(&mut self, seq: SequenceNumber) -> bool {
-        // Find and mark the message as delivered via the controlled transition.
         if let Some(entry) = self.ring.iter_mut().find(|e| e.envelope.sequence == seq) {
             entry.mark_delivered();
 
-            // Remove all delivered messages from the front
+            // Slide the window: pop all consecutive delivered messages from the front.
             while let Some(front) = self.ring.front() {
                 if front.state == MessageState::Delivered {
                     self.ring.pop_front();
@@ -201,14 +277,13 @@ impl<const N: usize> TxRing<N> {
                 }
             }
 
-            // Increase window on successful delivery
             self.increase_window();
             return true;
         }
         false
     }
 
-    /// Mark messages as failed if they exceeded retry limit
+    /// Mark messages as permanently failed after retry exhaustion.
     pub fn check_failures(&mut self, current_time_ms: u64) {
         let mut failed = false;
         for entry in self.ring.iter_mut() {
@@ -221,31 +296,28 @@ impl<const N: usize> TxRing<N> {
             }
         }
         if failed {
-            // Decrease window on failure
             self.decrease_window();
         }
     }
 
-    /// Increase window size (on successful delivery)
     fn increase_window(&mut self) {
         if self.window_size < self.window_max {
             self.window_size += 1;
         }
     }
 
-    /// Decrease window size (on failure or timeout)
     fn decrease_window(&mut self) {
         if self.window_size > self.window_min {
             self.window_size = (self.window_size - 1).max(self.window_min);
         }
     }
 
-    /// Get current window size
+    /// Current adaptive window size.
     pub fn window_size(&self) -> usize {
         self.window_size
     }
 
-    /// Get number of outstanding (unacknowledged) messages
+    /// Number of outstanding (unacknowledged) messages.
     pub fn outstanding(&self) -> usize {
         self.ring
             .iter()
@@ -253,95 +325,164 @@ impl<const N: usize> TxRing<N> {
             .count()
     }
 
-    /// Check if ring is empty
     pub fn is_empty(&self) -> bool {
         self.ring.is_empty()
     }
 
-    /// Get ring size
     pub fn len(&self) -> usize {
         self.ring.len()
     }
 }
 
-/// RX Ring - Manages incoming messages with ordering
-#[cfg(feature = "alloc")]
-pub struct RxRing<const N: usize = MAX_ENVELOPE_SIZE> {
-    /// Messages received out of order
-    out_of_order: HashMap<u16, RxMessageEntry<N>>,
+// ──────────────────────────────────────────────────────────────────────────────
+// RxRing
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// RX Ring — manages incoming messages with reorder buffering.
+///
+/// `N` is the maximum envelope size in bytes.
+/// `OOO` is the out-of-order buffer capacity.
+///
+/// **`heapless` feature requirement:** `OOO` must be a power of two (enforced
+/// by `heapless::FnvIndexMap` at compile time).
+#[cfg(any(feature = "alloc", feature = "heapless"))]
+pub struct RxRing<const N: usize = MAX_ENVELOPE_SIZE, const OOO: usize = 64> {
+    #[cfg(feature = "alloc")]
+    out_of_order: BTreeMap<u16, RxMessageEntry<N>>,
+    #[cfg(all(not(feature = "alloc"), feature = "heapless"))]
+    out_of_order: heapless::FnvIndexMap<u16, RxMessageEntry<N>, OOO>,
+
     /// Next expected sequence number
     next_expected: SequenceNumber,
-    /// Maximum out-of-order buffer size
+
+    /// Maximum out-of-order buffer size (alloc only; heapless uses `OOO`).
+    #[cfg(feature = "alloc")]
     max_out_of_order: usize,
 }
 
-#[cfg(feature = "alloc")]
-impl<const N: usize> Default for RxRing<N> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<const N: usize> RxRing<N> {
+#[cfg(any(feature = "alloc", feature = "heapless"))]
+impl<const N: usize, const OOO: usize> RxRing<N, OOO> {
     pub fn new() -> Self {
         Self {
-            out_of_order: HashMap::new(),
+            #[cfg(feature = "alloc")]
+            out_of_order: BTreeMap::new(),
+            #[cfg(all(not(feature = "alloc"), feature = "heapless"))]
+            out_of_order: heapless::FnvIndexMap::new(),
+
             next_expected: SequenceNumber::zero(),
-            max_out_of_order: 64, // Reasonable buffer size
+
+            #[cfg(feature = "alloc")]
+            max_out_of_order: OOO,
         }
     }
 
-    /// Process incoming envelope
+    fn ooo_capacity(&self) -> usize {
+        #[cfg(feature = "alloc")]
+        {
+            self.max_out_of_order
+        }
+        #[cfg(not(feature = "alloc"))]
+        {
+            OOO
+        }
+    }
+
+    /// Process an incoming envelope, calling `on_ready` for each message that
+    /// can now be delivered in order.
     ///
-    /// Returns a list of envelopes ready for delivery (in order)
+    /// This is the allocation-free core.  For alloc convenience use [`receive`].
+    ///
+    /// [`receive`]: Self::receive
+    pub fn receive_with<F>(
+        &mut self,
+        envelope: Envelope<N>,
+        current_time_ms: u64,
+        mut on_ready: F,
+    ) -> Result<(), RnsError>
+    where
+        F: FnMut(Envelope<N>),
+    {
+        let seq = envelope.sequence;
+
+        // Duplicate / already-delivered check.
+        if seq.is_before(self.next_expected) {
+            return Ok(());
+        }
+
+        if seq == self.next_expected {
+            on_ready(envelope);
+            self.next_expected.increment();
+
+            // Drain any buffered consecutive messages.
+            loop {
+                let key = self.next_expected.as_u16();
+                let next_entry = self.out_of_order.remove(&key);
+                match next_entry {
+                    Some(entry) => {
+                        on_ready(entry.envelope);
+                        self.next_expected.increment();
+                    }
+                    None => break,
+                }
+            }
+        } else {
+            // Out-of-order: buffer for later delivery.
+            if self.out_of_order.len() >= self.ooo_capacity() {
+                return Err(RnsError::WindowFull);
+            }
+            let entry = RxMessageEntry::new(envelope, current_time_ms);
+
+            #[cfg(feature = "alloc")]
+            {
+                self.out_of_order.insert(seq.as_u16(), entry);
+            }
+
+            #[cfg(all(not(feature = "alloc"), feature = "heapless"))]
+            self.out_of_order
+                .insert(seq.as_u16(), entry)
+                .map_err(|_| RnsError::WindowFull)?;
+        }
+
+        Ok(())
+    }
+
+    /// Process an incoming envelope, returning all now-deliverable messages.
+    ///
+    /// Requires the `alloc` feature.  For `no_alloc` use [`receive_with`].
+    ///
+    /// [`receive_with`]: Self::receive_with
+    #[cfg(feature = "alloc")]
     pub fn receive(
         &mut self,
         envelope: Envelope<N>,
         current_time_ms: u64,
     ) -> Result<Vec<Envelope<N>>, RnsError> {
-        let seq = envelope.sequence;
-
-        // Check if this is a duplicate
-        if seq.is_before(self.next_expected) {
-            // Old message, already delivered
-            return Ok(Vec::new());
-        }
-
         let mut ready = Vec::new();
-
-        if seq == self.next_expected {
-            // This is the next expected message
-            ready.push(envelope);
-            self.next_expected.increment();
-
-            // Check if we have subsequent messages in the out-of-order buffer
-            while let Some(entry) = self.out_of_order.remove(&self.next_expected.as_u16()) {
-                ready.push(entry.envelope);
-                self.next_expected.increment();
-            }
-        } else {
-            // Out of order message - buffer it
-            if self.out_of_order.len() >= self.max_out_of_order {
-                return Err(RnsError::WindowFull);
-            }
-
-            let entry = RxMessageEntry::new(envelope, current_time_ms);
-            self.out_of_order.insert(seq.as_u16(), entry);
-        }
-
+        self.receive_with(envelope, current_time_ms, |env| ready.push(env))?;
         Ok(ready)
     }
 
-    /// Get next expected sequence number
+    /// Get next expected sequence number.
     pub fn next_expected(&self) -> SequenceNumber {
         self.next_expected
     }
 
-    /// Get number of buffered out-of-order messages
+    /// Number of buffered out-of-order messages.
     pub fn buffered_count(&self) -> usize {
         self.out_of_order.len()
     }
 }
+
+#[cfg(any(feature = "alloc", feature = "heapless"))]
+impl<const N: usize, const OOO: usize> Default for RxRing<N, OOO> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Tests
+// ──────────────────────────────────────────────────────────────────────────────
 
 #[cfg(all(test, feature = "alloc"))]
 mod tests {
@@ -368,15 +509,12 @@ mod tests {
     fn test_tx_ring_window_limit() {
         let mut tx_ring: TxRing = TxRing::new(LinkSpeed::Slow);
 
-        // Initial window size is 2, not WINDOW_MAX_SLOW
-        // Fill up to initial window size
         for i in 0..WINDOW_INITIAL {
             tx_ring
                 .push(MessageType::new(1), &[i as u8])
                 .expect("push within window");
         }
 
-        // Next push should fail (window full)
         let result = tx_ring.push(MessageType::new(1), b"overflow");
         assert!(result.is_err());
     }
@@ -390,15 +528,12 @@ mod tests {
 
         assert_eq!(tx_ring.len(), 2);
 
-        // Messages must be marked sent before they can be acknowledged (protocol flow)
         tx_ring.get_mut(seq0).unwrap().mark_sent(0, 100, 2);
         tx_ring.get_mut(seq1).unwrap().mark_sent(0, 100, 2);
 
-        // Acknowledge first message
         assert!(tx_ring.acknowledge(seq0));
         assert_eq!(tx_ring.len(), 1);
 
-        // Acknowledge second message
         assert!(tx_ring.acknowledge(seq1));
         assert_eq!(tx_ring.len(), 0);
     }
@@ -409,12 +544,10 @@ mod tests {
 
         let initial_window = tx_ring.window_size();
 
-        // Push, mark sent, then acknowledge (protocol order)
         let seq = tx_ring.push(MessageType::new(1), b"test").expect("push");
         tx_ring.get_mut(seq).unwrap().mark_sent(0, 100, 1);
         tx_ring.acknowledge(seq);
 
-        // Window should increase
         assert!(tx_ring.window_size() > initial_window);
     }
 
@@ -438,19 +571,17 @@ mod tests {
     fn test_rx_ring_out_of_order() {
         let mut rx_ring: RxRing = RxRing::new();
 
-        // Receive message 2 before message 1
         let env2: Envelope =
             Envelope::new(MessageType::new(1), SequenceNumber::new(1), b"msg2").expect("envelope");
         let ready = rx_ring.receive(env2, 0).expect("receive");
-        assert_eq!(ready.len(), 0); // Buffered, not ready
+        assert_eq!(ready.len(), 0);
 
         assert_eq!(rx_ring.buffered_count(), 1);
 
-        // Now receive message 1
         let env1: Envelope =
             Envelope::new(MessageType::new(1), SequenceNumber::new(0), b"msg1").expect("envelope");
         let ready = rx_ring.receive(env1, 0).expect("receive");
-        assert_eq!(ready.len(), 2); // Both messages now ready
+        assert_eq!(ready.len(), 2);
 
         assert_eq!(rx_ring.buffered_count(), 0);
     }
@@ -465,7 +596,6 @@ mod tests {
         let ready1 = rx_ring.receive(env.clone(), 0).expect("receive");
         assert_eq!(ready1.len(), 1);
 
-        // Duplicate should be ignored
         let ready2 = rx_ring.receive(env, 0).expect("receive");
         assert_eq!(ready2.len(), 0);
     }
@@ -480,10 +610,33 @@ mod tests {
         assert_eq!(entry.state(), MessageState::Sent);
         assert_eq!(entry.tries, 1);
 
-        // Not timed out yet
         assert!(!entry.is_timed_out(1000 + 100));
-
-        // Timed out
         assert!(entry.is_timed_out(1000 + entry.timeout_ms as u64 + 1));
+    }
+
+    #[test]
+    fn test_for_each_pending() {
+        let mut tx_ring: TxRing = TxRing::new(LinkSpeed::Medium);
+
+        let seq0 = tx_ring.push(MessageType::new(1), b"a").expect("push");
+        let seq1 = tx_ring.push(MessageType::new(1), b"b").expect("push");
+
+        let mut pending = Vec::new();
+        tx_ring.for_each_pending(0, |s| pending.push(s));
+        assert_eq!(pending, [seq0, seq1]);
+    }
+
+    #[test]
+    fn test_receive_with() {
+        let mut rx_ring: RxRing = RxRing::new();
+
+        let env: Envelope =
+            Envelope::new(MessageType::new(1), SequenceNumber::new(0), b"x").expect("envelope");
+
+        let mut count = 0usize;
+        rx_ring
+            .receive_with(env, 0, |_| count += 1)
+            .expect("receive_with");
+        assert_eq!(count, 1);
     }
 }

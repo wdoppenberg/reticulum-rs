@@ -2,6 +2,7 @@
 name = "reticulum-core"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.75"
 license = "MIT"
 repository = "https://github.com/wdoppenberg/reticulum-rs"
 categories = ["network-programming", "no-std", "embedded"]
@@ -13,6 +14,10 @@ This is a no_std compatible crate that can run on embedded systems.
 """
 
 [dependencies]
+# Generates `SendInterface` (RPITIT + Send) alongside the AFIT `Interface` trait,
+# letting the tokio runtime use `SendInterface` without redefining the methods.
+trait-variant = "0.1"
+
 # Crypto primitives (all no_std compatible)
 crypto-common = { version = "0.1.6", default-features = false, features = ["rand_core"] }
 aes = { version = "0.8.4", default-features = false }
@@ -20,7 +25,6 @@ cbc = { version = "0.1.2", default-features = false }
 cipher = { version = "0.4", default-features = false, features = ["block-padding"] }
 x25519-dalek = { version = "2.0.1", default-features = false, features = ["static_secrets", "zeroize"] }
 ed25519-dalek = { version = "2.1.1", default-features = false, features = ["zeroize"] }
-zeroize = { version = "1", default-features = false }
 hkdf = { version = "0.12.4", default-features = false }
 hmac = { version = "0.12.1", default-features = false }
 sha2 = { version = "0.10.8", default-features = false }
@@ -29,9 +33,18 @@ rand_core = { version = "0.6.4", default-features = false }
 # Logging facade (no_std compatible)
 log = { version = "0.4.27", default-features = false }
 
+# Optional: stack-allocated collections for no_alloc embedded targets.
+# OOO capacity in RxRing must be a power of two when this feature is active.
+heapless = { version = "0.8", default-features = false, optional = true }
+
+# Async combinators for no_std contexts (select, join, yield_now — no alloc required).
+embassy-futures = { version = "0.1.2", default-features = false, optional = true }
+
 [features]
 default = ["alloc"]
 alloc = []
+heapless = ["dep:heapless"]
+embassy-futures = ["dep:embassy-futures"]
 fernet-aes128 = []
 
 [dev-dependencies]

@@ -1,0 +1,55 @@
+[package]
+name = "reticulum-embassy"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+license = "MIT"
+repository = "https://github.com/wdoppenberg/reticulum-rs"
+categories = ["network-programming", "no-std", "embedded"]
+keywords = ["reticulum", "mesh", "embassy", "no-std", "embedded"]
+
+description = """
+Embassy-based async runtime for the Reticulum Network Stack.
+Provides clock, delay, and interface-driver infrastructure for
+bare-metal / RTOS targets running the Embassy executor.
+"""
+
+[dependencies]
+# Core protocol types — no_std, heapless + embassy-futures features required
+reticulum-core = { path = "../reticulum-core", version = "0.1.0", default-features = false, features = ["heapless", "embassy-futures"] }
+
+# Embassy sync primitives and select — no target-specific code
+embassy-sync    = { version = "0.6",  default-features = false }
+embassy-futures = { version = "0.1",  default-features = false }
+
+# Optional: EmbassyClock / EmbassyDelay via embassy-time.
+# Enable this feature when an embassy-time time-driver is available
+# (provided by e.g. embassy-nrf, embassy-stm32, or embassy-time-driver).
+# Targets without a time driver can still use all interface infrastructure.
+embassy-time = { version = "0.3", default-features = false, optional = true }
+
+# Stack-allocated collections
+heapless = { version = "0.8", default-features = false }
+
+# Async I/O traits for embedded drivers (UART, SPI, …)
+embedded-io-async = { version = "0.6.1", default-features = false }
+
+# Logging facade — no_std compatible
+log = { version = "0.4", default-features = false }
+
+# Optional: defmt logging for embedded targets
+defmt = { version = "0.3", optional = true }
+
+[features]
+default = ["embassy-time"]
+# Enables EmbassyClock + EmbassyDelay — requires an embassy-time time-driver
+# to be present in the final binary (supplied by the HAL crate).
+embassy-time = ["dep:embassy-time"]
+# Use defmt for logging instead of log
+defmt = ["dep:defmt"]
+
+[dev-dependencies]
+pollster = "0.3"
+# critical-section std provider required when embassy_sync channels are used in
+# host-side tests (on-target, the HAL provides this automatically).
+critical-section = { version = "1", features = ["std"] }

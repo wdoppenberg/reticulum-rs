@@ -1,3 +1,4 @@
+#[cfg(feature = "alloc")]
 use alloc::fmt::Write;
 use core::cmp;
 use core::fmt;
@@ -128,8 +129,9 @@ impl AddressHash {
         self.len() == 0
     }
 
-    pub fn to_hex_string(&self) -> String {
-        let mut hex_string = String::with_capacity(ADDRESS_HASH_SIZE * 2);
+    #[cfg(feature = "alloc")]
+    pub fn to_hex_string(&self) -> alloc::string::String {
+        let mut hex_string = alloc::string::String::with_capacity(ADDRESS_HASH_SIZE * 2);
 
         for byte in self.0 {
             write!(&mut hex_string, "{:02x}", byte).unwrap();

@@ -1,0 +1,45 @@
+[package]
+name = "heltec-t114"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+description = "Reticulum node firmware for the Heltec T114 (nRF52840 + SX1262)."
+
+[[bin]]
+name = "heltec-t114"
+path = "src/main.rs"
+
+[dependencies]
+# ── Reticulum stack ────────────────────────────────────────────────────────────
+reticulum-node    = { path = "../../crates/reticulum-node",    default-features = false, features = ["embassy", "lora", "storage"] }
+reticulum-core    = { path = "../../crates/reticulum-core",    default-features = false, features = ["heapless"] }
+reticulum-embassy = { path = "../../crates/reticulum-embassy", default-features = false }
+
+# ── Embassy runtime ────────────────────────────────────────────────────────────
+embassy-executor = { version = "0.7", default-features = false, features = ["arch-cortex-m", "executor-thread"] }
+embassy-sync     = { version = "0.6", default-features = false }
+embassy-time     = { version = "0.3", default-features = false }
+
+# ── LoRa radio driver ──────────────────────────────────────────────────────────
+lora-phy = { version = "3.0.1", default-features = false }
+
+# ── Logging ────────────────────────────────────────────────────────────────────
+log       = { version = "0.4",  default-features = false }
+defmt     = { version = "0.3" }
+defmt-rtt = { version = "0.4" }
+
+# ── Panic handler ──────────────────────────────────────────────────────────────
+panic-probe = { version = "0.3", features = ["print-defmt"] }
+
+# ── nRF52840 HAL + Cortex-M support ───────────────────────────────────────────
+[target.'cfg(target_arch = "arm")'.dependencies]
+embassy-nrf = { version = "0.2", default-features = false, features = [
+    "nrf52840",
+    "time-driver-rtc1",
+    "gpiote",
+    "unstable-pac",
+    "defmt",
+] }
+cortex-m    = { version = "0.7", features = ["critical-section-single-core"] }
+cortex-m-rt = { version = "0.7" }

@@ -42,18 +42,18 @@ async fn main() {
 
     match mode.as_str() {
         "server" => {
-            transport.iface_manager().lock().await.spawn(
-                TcpServer::new(SERVER_ADDR, transport.iface_manager()),
-                TcpServer::spawn,
-            );
+            let mgr = transport.iface_manager().clone();
+            let cancel = tokio_util::sync::CancellationToken::new();
+            tokio::spawn(async move { TcpServer::new(SERVER_ADDR).run(mgr, cancel).await });
             println!("[{mode}] Listening on {SERVER_ADDR}");
         }
         _ => {
+            let client = TcpClient::connect(SERVER_ADDR).await.expect("tcp connect");
             transport
                 .iface_manager()
                 .lock()
                 .await
-                .spawn(TcpClient::new(SERVER_ADDR), TcpClient::spawn);
+                .spawn_interface(client);
             println!("[{mode}] Connecting to {SERVER_ADDR}");
         }
     }

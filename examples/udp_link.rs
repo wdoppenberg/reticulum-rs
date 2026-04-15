@@ -32,9 +32,10 @@ async fn main() {
     let destination = SingleInputDestination::new(id.clone(), DestinationName::new("example", "app"));
     let transport = Transport::new(TransportConfig::new("server", &id, true));
 
-    let _ = transport.iface_manager().lock().await.spawn(
-        UdpInterface::new("0.0.0.0:4243", Some("127.0.0.1:4242")),
-        UdpInterface::spawn);
+    let udp = UdpInterface::bind("0.0.0.0:4243", Some("127.0.0.1:4242".to_string()))
+        .await
+        .expect("udp bind");
+    transport.iface_manager().lock().await.spawn_interface(udp);
 
     let dest = Arc::new(tokio::sync::Mutex::new (destination));
 

@@ -8,6 +8,7 @@ use reticulum_tokio::tcp_client::TcpClient;
 use reticulum_tokio::tcp_server::TcpServer;
 use reticulum_tokio::{Transport, TransportConfig};
 use tokio::time;
+use tokio_util::sync::CancellationToken;
 
 static INIT: Once = Once::new();
 
@@ -35,17 +36,30 @@ async fn build_transport_full(
 
     let transport = Transport::new(config);
 
-    transport.iface_manager().lock().await.spawn(
-        TcpServer::new(server_addr, transport.iface_manager()),
-        TcpServer::spawn,
-    );
+    let cancel = CancellationToken::new();
+    let mgr = transport.iface_manager().clone();
+    let server_addr = server_addr.to_owned();
+    tokio::spawn(async move { TcpServer::new(&server_addr).run(mgr, cancel).await });
 
     for &addr in client_addr {
+        let client = {
+            let mut retries = 0u32;
+            loop {
+                match TcpClient::connect(addr).await {
+                    Ok(c) => break c,
+                    Err(_) if retries < 20 => {
+                        retries += 1;
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    }
+                    Err(e) => panic!("tcp connect to {addr} failed after retries: {e}"),
+                }
+            }
+        };
         transport
             .iface_manager()
             .lock()
             .await
-            .spawn(TcpClient::new(addr), TcpClient::spawn);
+            .spawn_interface(client);
     }
 
     log::info!("test: transport {} created", name);

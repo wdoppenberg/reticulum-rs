@@ -1,117 +1,76 @@
-use std::string::String;
 use std::sync::Arc;
+use std::time::Duration;
 
 use tokio::net::TcpListener;
-
-use reticulum_core::error::RnsError;
+use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
 
 use super::tcp_client::TcpClient;
-use super::{Interface, InterfaceContext, InterfaceManager};
+use crate::iface::InterfaceManager;
 
+/// Listens for inbound TCP connections and registers each accepted client as an
+/// independent interface with the `InterfaceManager`.
+///
+/// Unlike the data interfaces, `TcpServer` is not itself a
+/// `reticulum_core::Interface` — it is a *listener* that dynamically creates
+/// `TcpClient` interfaces.  Spawn it with [`TcpServer::run`].
 pub struct TcpServer {
     addr: String,
-    iface_manager: Arc<tokio::sync::Mutex<InterfaceManager>>,
 }
 
 impl TcpServer {
-    pub fn new<T: Into<String>>(
-        addr: T,
-        iface_manager: Arc<tokio::sync::Mutex<InterfaceManager>>,
-    ) -> Self {
-        Self {
-            addr: addr.into(),
-            iface_manager,
-        }
+    pub fn new<T: Into<String>>(addr: T) -> Self {
+        Self { addr: addr.into() }
     }
 
-    pub async fn spawn(context: InterfaceContext<Self>) {
-        let addr = { context.inner.lock().unwrap().addr.clone() };
-
-        let iface_manager = { context.inner.lock().unwrap().iface_manager.clone() };
-
-        let (_, tx_channel) = context.channel.split();
-        let tx_channel = Arc::new(tokio::sync::Mutex::new(tx_channel));
-
+    /// Bind to the configured address and accept connections until the
+    /// cancellation token fires.
+    ///
+    /// Each accepted connection is wrapped in a [`TcpClient`] and registered
+    /// with `iface_manager` via `spawn_interface`.
+    pub async fn run(self, iface_manager: Arc<Mutex<InterfaceManager>>, cancel: CancellationToken) {
         loop {
-            if context.cancel.is_cancelled() {
+            if cancel.is_cancelled() {
                 break;
             }
 
-            let listener = TcpListener::bind(addr.clone())
-                .await
-                .map_err(|_| RnsError::ConnectionError);
-
-            if listener.is_err() {
-                log::warn!("tcp_server: couldn't bind to <{}>", addr);
-                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                continue;
-            }
-
-            log::info!("tcp_server: listen on <{}>", addr);
-
-            let listener = listener.unwrap();
-
-            let tx_task = {
-                let cancel = context.cancel.clone();
-                let tx_channel = tx_channel.clone();
-
-                tokio::spawn(async move {
-                    loop {
-                        if cancel.is_cancelled() {
-                            break;
-                        }
-
-                        let mut tx_channel = tx_channel.lock().await;
-
-                        tokio::select! {
-                            _ = cancel.cancelled() => {
-                                break;
-                            }
-                            // Skip all tx messages
-                            _ = tx_channel.recv() => {}
-                        }
-                    }
-                })
+            let listener = match TcpListener::bind(&self.addr).await {
+                Ok(l) => {
+                    log::info!("tcp_server: listening on <{}>", self.addr);
+                    l
+                }
+                Err(e) => {
+                    log::warn!("tcp_server: couldn't bind to <{}>: {e}", self.addr);
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                    continue;
+                }
             };
 
-            let cancel = context.cancel.clone();
-
             loop {
-                if cancel.is_cancelled() {
-                    break;
-                }
-
                 tokio::select! {
-                    _ = cancel.cancelled() => {
-                        break;
-                    }
-
-                    client = listener.accept() => {
-                        if let Ok(client) = client {
-                            log::info!(
-                                "tcp_server: new client <{}> connected to <{}>",
-                                client.1,
-                                addr
-                            );
-
-                            let mut iface_manager = iface_manager.lock().await;
-
-                            iface_manager.spawn(
-                                TcpClient::new_from_stream(client.1.to_string(), client.0),
-                                TcpClient::spawn,
-                            );
+                    biased;
+                    _ = cancel.cancelled() => return,
+                    result = listener.accept() => {
+                        match result {
+                            Ok((stream, peer_addr)) => {
+                                log::info!(
+                                    "tcp_server: new client <{peer_addr}> on <{}>",
+                                    self.addr
+                                );
+                                let client = TcpClient::from_stream(
+                                    peer_addr.to_string(),
+                                    stream,
+                                );
+                                iface_manager.lock().await.spawn_interface(client);
+                            }
+                            Err(e) => {
+                                log::warn!("tcp_server: accept error: {e}");
+                                break; // re-bind
+                            }
                         }
                     }
                 }
             }
-
-            let _ = tokio::join!(tx_task);
         }
-    }
-}
-
-impl Interface for TcpServer {
-    fn mtu() -> usize {
-        2048
     }
 }

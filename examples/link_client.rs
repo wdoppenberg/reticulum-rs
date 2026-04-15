@@ -15,11 +15,8 @@ async fn main() {
     log::info!("start tcp app");
 
     {
-        transport
-            .iface_manager()
-            .lock()
-            .await
-            .spawn(TcpClient::new("127.0.0.1:4242"), TcpClient::spawn);
+        let client = TcpClient::connect("127.0.0.1:4242").await.expect("tcp connect");
+        transport.iface_manager().lock().await.spawn_interface(client);
     }
 
     let identity = PrivateIdentity::new_from_name("link-example");

@@ -58,17 +58,16 @@ async fn main() {
 
     let our_address = format!("0.0.0.0:{}", our_hop + 5101);
 
-    let _ = transport.iface_manager().lock().await.spawn(
-        TcpServer::new(our_address, transport.iface_manager()),
-        TcpServer::spawn,
-    );
+    {
+        let mgr = transport.iface_manager().clone();
+        let cancel = tokio_util::sync::CancellationToken::new();
+        tokio::spawn(async move { TcpServer::new(&our_address).run(mgr, cancel).await });
+    }
 
     if our_hop > 0 {
         let connect_to = format!("127.0.0.1:{}", our_hop + 5100);
-        let client_addr = transport.iface_manager().lock().await.spawn(
-            TcpClient::new(connect_to),
-            TcpClient::spawn,
-        );
+        let client = TcpClient::connect(&connect_to).await.expect("tcp connect");
+        let client_addr = transport.iface_manager().lock().await.spawn_interface(client);
 
         let destination;
         if our_hop == last_hop {

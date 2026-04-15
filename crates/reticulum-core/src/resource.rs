@@ -163,6 +163,9 @@ impl ResourceFlags {
 /// Resource advertisement structure
 ///
 /// Sent to announce a new resource transfer.
+///
+/// Requires the `alloc` feature (the `hashmap` field is heap-allocated).
+#[cfg(feature = "alloc")]
 #[derive(Debug, Clone)]
 pub struct ResourceAdvertisement {
     /// Resource flags (encrypted, compressed)
@@ -189,6 +192,7 @@ pub struct ResourceAdvertisement {
     pub has_metadata: bool,
 }
 
+#[cfg(feature = "alloc")]
 impl ResourceAdvertisement {
     /// Maximum length of hashmap in advertisement
     pub const HASHMAP_MAX_LEN: usize = 84;
@@ -417,6 +421,7 @@ pub struct Resource {
     pub parts: Vec<Option<Vec<u8>>>,
 }
 
+#[cfg(feature = "alloc")]
 impl Resource {
     /// Create a new Resource for sending data
     pub fn new_outgoing(

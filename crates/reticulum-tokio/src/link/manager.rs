@@ -9,7 +9,9 @@ use reticulum_core::{
     destination::DestinationDesc,
     error::RnsError,
     hash::AddressHash,
-    identity::{DecryptIdentity, DerivedKey, EncryptIdentity, Identity, PrivateIdentity, PUBLIC_KEY_LENGTH},
+    identity::{
+        DecryptIdentity, DerivedKey, EncryptIdentity, Identity, PrivateIdentity, PUBLIC_KEY_LENGTH,
+    },
     packet::{
         DestinationType, Header, Packet, PacketContext, PacketDataBuffer, PacketType, PACKET_MDU,
     },
@@ -17,7 +19,7 @@ use reticulum_core::{
 
 // Re-export core link types so downstream crates only need to import from `crate::link`.
 pub use reticulum_core::link::{
-    DataKind, LinkDataFrame, LinkEvent, LinkHandleResult, LinkId, LinkHandshake, LinkPayload,
+    DataKind, LinkDataFrame, LinkEvent, LinkHandleResult, LinkHandshake, LinkId, LinkPayload,
     LinkStatus,
 };
 
@@ -298,9 +300,12 @@ impl Link {
 
         let mut packet_data = PacketDataBuffer::new();
         let cipher_text_len = {
-            let cipher_text = self
-                .priv_identity
-                .encrypt(OsRng, data, &established.derived_key, packet_data.acquire_buf_max())?;
+            let cipher_text = self.priv_identity.encrypt(
+                OsRng,
+                data,
+                &established.derived_key,
+                packet_data.acquire_buf_max(),
+            )?;
             cipher_text.len()
         };
         packet_data.resize(cipher_text_len);
@@ -324,9 +329,12 @@ impl Link {
 
         let mut packet_data = PacketDataBuffer::new();
         let cipher_text_len = {
-            let cipher_text = self
-                .priv_identity
-                .encrypt(OsRng, data, &established.derived_key, packet_data.acquire_buf_max())?;
+            let cipher_text = self.priv_identity.encrypt(
+                OsRng,
+                data,
+                &established.derived_key,
+                packet_data.acquire_buf_max(),
+            )?;
             cipher_text.len()
         };
         packet_data.resize(cipher_text_len);
@@ -349,9 +357,12 @@ impl Link {
 
         let mut packet_data = PacketDataBuffer::new();
         let cipher_text_len = {
-            let cipher_text = self
-                .priv_identity
-                .encrypt(OsRng, data, &established.derived_key, packet_data.acquire_buf_max())?;
+            let cipher_text = self.priv_identity.encrypt(
+                OsRng,
+                data,
+                &established.derived_key,
+                packet_data.acquire_buf_max(),
+            )?;
             cipher_text.len()
         };
         packet_data.resize(cipher_text_len);
@@ -417,9 +428,12 @@ impl Link {
 
         let mut packet_data = PacketDataBuffer::new();
         let token_len = {
-            let token = self
-                .priv_identity
-                .encrypt(OsRng, buf.as_slice(), &established.derived_key, packet_data.acquire_buf_max())?;
+            let token = self.priv_identity.encrypt(
+                OsRng,
+                buf.as_slice(),
+                &established.derived_key,
+                packet_data.acquire_buf_max(),
+            )?;
             token.len()
         };
         packet_data.resize(token_len);

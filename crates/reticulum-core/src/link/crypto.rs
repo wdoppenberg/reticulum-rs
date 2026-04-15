@@ -1,4 +1,4 @@
-use ed25519_dalek::{Signature, SIGNATURE_LENGTH, VerifyingKey};
+use ed25519_dalek::{Signature, VerifyingKey, SIGNATURE_LENGTH};
 
 use crate::{
     buffer::OutputBuffer,

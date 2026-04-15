@@ -347,13 +347,23 @@ impl Reticulum<Unstarted> {
             )));
             // Wire interfaces into the transport's own InterfaceManager so
             // packets flow through the transport's internal receive loop.
-            initialize_interfaces(&data.config, &transport.iface_manager()).await?;
+            initialize_interfaces(
+                &data.config,
+                &transport.iface_manager(),
+                data.cancellation_token.clone(),
+            )
+            .await?;
             // Expose the same InterfaceManager through Reticulum<Running>.
             data.interface_manager = transport.iface_manager();
             data.transport = Some(transport);
         } else {
             log::debug!("Transport layer disabled");
-            initialize_interfaces(&data.config, &data.interface_manager).await?;
+            initialize_interfaces(
+                &data.config,
+                &data.interface_manager,
+                data.cancellation_token.clone(),
+            )
+            .await?;
         }
 
         log::info!("Reticulum started successfully");
@@ -392,9 +402,9 @@ impl Reticulum<Running> {
 async fn initialize_interfaces(
     config: &Config,
     interface_manager: &Arc<Mutex<InterfaceManager>>,
+    cancel: CancellationToken,
 ) -> Result<(), ReticulumError> {
     log::debug!("Initializing interfaces");
-    let mut iface_mgr = interface_manager.lock().await;
 
     for (name, iface_config) in &config.interfaces {
         match iface_config {
@@ -406,11 +416,32 @@ async fn initialize_interfaces(
                 log::info!("Initializing TCP interface '{}' ({})", name, addr);
                 match tcp_config.mode.as_str() {
                     "server" => {
-                        let server = TcpServer::new(addr, interface_manager.clone());
-                        iface_mgr.spawn(server, TcpServer::spawn);
+                        let server = TcpServer::new(addr);
+                        let mgr = interface_manager.clone();
+                        let cancel = cancel.clone();
+                        tokio::spawn(async move { server.run(mgr, cancel).await });
                     }
                     "client" => {
-                        iface_mgr.spawn(TcpClient::new(addr), TcpClient::spawn);
+                        // Retry a few times to allow a peer server to finish binding.
+                        let mut connected = false;
+                        for attempt in 0..10u32 {
+                            match TcpClient::connect(&addr).await {
+                                Ok(client) => {
+                                    interface_manager.lock().await.spawn_interface(client);
+                                    connected = true;
+                                    break;
+                                }
+                                Err(_) if attempt < 9 => {
+                                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                                }
+                                Err(e) => {
+                                    log::error!("tcp_client '{}': failed to connect: {e}", name);
+                                }
+                            }
+                        }
+                        if !connected {
+                            log::warn!("tcp_client '{}': giving up after retries", name);
+                        }
                     }
                     mode => {
                         log::warn!("Unknown TCP mode '{}' for interface '{}'", mode, name);
@@ -423,51 +454,71 @@ async fn initialize_interfaces(
                 }
                 let bind_addr = format!("{}:{}", udp_config.address, udp_config.port);
                 let forward_addr = udp_config.forward_broadcasts.then(|| bind_addr.clone());
-                iface_mgr.spawn(
-                    UdpInterface::new(bind_addr, forward_addr),
-                    UdpInterface::spawn,
-                );
+                match UdpInterface::bind(&bind_addr, forward_addr).await {
+                    Ok(iface) => {
+                        interface_manager.lock().await.spawn_interface(iface);
+                    }
+                    Err(e) => {
+                        log::error!("udp '{}': failed to bind: {e}", name);
+                    }
+                }
             }
             InterfaceConfig::Auto(auto_config) => {
                 if !auto_config.enabled {
                     continue;
                 }
-                iface_mgr.spawn(
-                    AutoInterface::new(
-                        auto_config.group.clone(),
-                        auto_config.discovery_port,
-                        auto_config.data_port,
-                    ),
-                    AutoInterface::spawn,
-                );
+                match AutoInterface::connect(
+                    auto_config.group.clone(),
+                    auto_config.discovery_port,
+                    auto_config.data_port,
+                ) {
+                    Ok(iface) => {
+                        interface_manager.lock().await.spawn_interface(iface);
+                    }
+                    Err(e) => {
+                        log::error!("auto_interface '{}': failed to connect: {e}", name);
+                    }
+                }
             }
             InterfaceConfig::Serial(serial_config) => {
                 if !serial_config.enabled {
                     continue;
                 }
-                iface_mgr.spawn(
-                    SerialInterface::new(
-                        serial_config.port.clone(),
-                        serial_config.baud_rate,
-                        serial_config.data_bits,
-                        serial_config.parity.clone(),
-                        serial_config.stop_bits,
-                    ),
-                    SerialInterface::spawn,
-                );
+                match SerialInterface::open(
+                    serial_config.port.clone(),
+                    serial_config.baud_rate,
+                    serial_config.data_bits,
+                    serial_config.parity.clone(),
+                    serial_config.stop_bits,
+                )
+                .await
+                {
+                    Ok(iface) => {
+                        interface_manager.lock().await.spawn_interface(iface);
+                    }
+                    Err(e) => {
+                        log::error!("serial '{}': failed to open port: {e}", name);
+                    }
+                }
             }
             InterfaceConfig::I2P(i2p_config) => {
                 if !i2p_config.enabled {
                     continue;
                 }
-                iface_mgr.spawn(
-                    I2PInterface::new(
-                        i2p_config.sam_host.clone(),
-                        i2p_config.sam_port,
-                        i2p_config.destination.clone(),
-                    ),
-                    I2PInterface::spawn,
-                );
+                match I2PInterface::connect(
+                    &i2p_config.sam_host,
+                    i2p_config.sam_port,
+                    i2p_config.destination.as_deref(),
+                )
+                .await
+                {
+                    Ok(iface) => {
+                        interface_manager.lock().await.spawn_interface(iface);
+                    }
+                    Err(e) => {
+                        log::error!("i2p '{}': failed to connect to SAM bridge: {e}", name);
+                    }
+                }
             }
         }
     }

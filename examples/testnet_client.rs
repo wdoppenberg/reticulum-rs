@@ -15,10 +15,10 @@ async fn main() {
     let transport = Transport::new(TransportConfig::default());
 
     // https://reticulum.network/manual/gettingstartedfast.html#connect-to-the-public-testnet
-    transport.iface_manager().lock().await.spawn(
-        TcpClient::new("amsterdam.connect.reticulum.network:4965"),
-        TcpClient::spawn,
-    );
+    let client = TcpClient::connect("amsterdam.connect.reticulum.network:4965")
+        .await
+        .expect("tcp connect");
+    transport.iface_manager().lock().await.spawn_interface(client);
 
     let transport = Arc::new(Mutex::new(transport));
     let cancel = CancellationToken::new();

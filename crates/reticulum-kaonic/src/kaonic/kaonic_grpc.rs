@@ -16,9 +16,10 @@ use tonic::transport::Channel;
 
 use reticulum_core::buffer::{InputBuffer, OutputBuffer};
 use reticulum_core::error::RnsError;
+use reticulum_core::hash::AddressHash;
 use reticulum_core::packet::Packet;
 use reticulum_core::serde::Serialize;
-use reticulum_tokio::iface::{Interface, InterfaceContext, RxMessage};
+use reticulum_tokio::iface::{InterfaceChannel, InterfaceManager, RxMessage};
 
 use crate::RadioConfig;
 
@@ -43,20 +44,34 @@ impl KaonicGrpc {
         }
     }
 
-    pub async fn spawn(context: InterfaceContext<Self>) {
-        let addr = { context.inner.lock().unwrap().addr.clone() };
-        let current_config = { context.inner.lock().unwrap().config.clone() };
+    /// Register this interface with an `InterfaceManager` and spawn the driver
+    /// task.  Returns the `AddressHash` assigned to this interface.
+    pub fn register(self, mgr: &mut InterfaceManager, cancel: CancellationToken) -> AddressHash {
+        let inner = Arc::new(std::sync::Mutex::new(self));
+        let channel = mgr.new_channel(16);
+        let address = *channel.address();
+        tokio::spawn(Self::spawn(inner, channel, cancel));
+        address
+    }
 
-        let iface_address = context.channel.address;
+    pub async fn spawn(
+        inner: Arc<std::sync::Mutex<Self>>,
+        channel: InterfaceChannel,
+        cancel: CancellationToken,
+    ) {
+        let addr = { inner.lock().unwrap().addr.clone() };
+        let current_config = { inner.lock().unwrap().config.clone() };
 
-        let (rx_channel, tx_channel) = context.channel.split();
+        let iface_address = channel.address;
+
+        let (rx_channel, tx_channel) = channel.split();
 
         let tx_channel = Arc::new(tokio::sync::Mutex::new(tx_channel));
 
-        let config_channel = context.inner.lock().unwrap().config_channel.clone();
+        let config_channel = inner.lock().unwrap().config_channel.clone();
 
         loop {
-            if context.cancel.is_cancelled() {
+            if cancel.is_cancelled() {
                 break;
             }
 
@@ -90,7 +105,7 @@ impl KaonicGrpc {
 
             const BUFFER_SIZE: usize = std::mem::size_of::<Packet>() * 2;
 
-            let cancel = context.cancel.clone();
+            let cancel = cancel.clone();
             let stop = CancellationToken::new();
 
             let rx_task = {
@@ -276,10 +291,4 @@ fn decode_frame_to_buffer<'a>(
     }
 
     Ok(&buffer[..length])
-}
-
-impl Interface for KaonicGrpc {
-    fn mtu() -> usize {
-        2048
-    }
 }

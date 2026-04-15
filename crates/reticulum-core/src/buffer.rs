@@ -55,6 +55,7 @@ impl<const N: usize> StaticBuffer<N> {
 
         let max_size = core::cmp::min(data_size, N - self.len);
 
+        // TODO: Safety not guaranteed
         self.write(&data[..max_size]).unwrap_or(0)
     }
 
@@ -117,22 +118,6 @@ impl<const N: usize> StaticBuffer<N> {
     pub fn acquire_buf_max(&mut self) -> &mut [u8] {
         self.len = self.buffer.len();
         &mut self.buffer[..self.len]
-    }
-
-    /// Deprecated: use [`acquire_buf`](Self::acquire_buf) instead.
-    #[deprecated(
-        since = "0.1.1",
-        note = "use acquire_buf (fixes bounds check and spelling)"
-    )]
-    pub fn accuire_buf(&mut self, len: usize) -> &mut [u8] {
-        self.len = len;
-        &mut self.buffer[..self.len]
-    }
-
-    /// Deprecated: use [`acquire_buf_max`](Self::acquire_buf_max) instead.
-    #[deprecated(since = "0.1.1", note = "use acquire_buf_max (fixes spelling)")]
-    pub fn accuire_buf_max(&mut self) -> &mut [u8] {
-        self.acquire_buf_max()
     }
 }
 
