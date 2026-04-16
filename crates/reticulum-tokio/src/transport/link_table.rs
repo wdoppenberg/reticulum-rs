@@ -9,9 +9,11 @@ pub struct LinkEntry {
     pub timestamp: Instant,
     pub proof_timeout: Instant,
     pub next_hop: AddressHash,
+    #[allow(dead_code)]
     pub next_hop_iface: AddressHash,
     pub received_from: AddressHash,
     pub original_destination: AddressHash,
+    #[allow(dead_code)]
     pub taken_hops: u8,
     pub remaining_hops: u8,
     pub validated: bool,

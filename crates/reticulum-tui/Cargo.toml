@@ -1,0 +1,28 @@
+[package]
+name = "reticulum-tui"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/wdoppenberg/reticulum-rs"
+description = "Ratatui-based terminal chat client for the Reticulum Network Stack."
+
+[[bin]]
+name = "reticulum-tui"
+path = "src/main.rs"
+
+[dependencies]
+reticulum-chat = { path = "../reticulum-chat", version = "0.1.0" }
+reticulum-core = { path = "../reticulum-core", version = "0.1.0" }
+reticulum-tokio = { path = "../reticulum-tokio", version = "0.1.0" }
+
+tokio = { version = "1", features = ["full"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
+
+# TUI
+ratatui = "0.29"
+crossterm = "0.28"
+
+# Logging
+log = "0.4"
+env_logger = "0.10"
+anyhow = "1"

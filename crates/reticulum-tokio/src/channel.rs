@@ -3,18 +3,9 @@
 //! Wraps the `reticulum-core` sliding-window Channel state machine in a
 //! tokio-compatible API that integrates with the Transport's link event bus.
 //!
-//! # Usage
-//!
-//! ```no_run
-//! # use std::sync::Arc;
-//! # use tokio::sync::Mutex;
-//! // After a Link is established:
-//! // let (channel, mut receiver) = Channel::new(link, transport, event_rx, LinkSpeed::Medium);
-//! // channel.send(MessageType::new(1), b"hello").await?;
-//! // if let Some(msg) = receiver.recv().await {
-//! //     println!("got msg type={}", msg.msg_type.as_u16());
-//! // }
-//! ```
+//! [`Channel::new`] requires an [`ActiveLink`] — a capability token that can
+//! only be issued by the transport once a link proof has been validated.  This
+//! is a compile-time guarantee that channels cannot be opened on pending links.
 
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -30,7 +21,7 @@ use reticulum_core::channel::types::{
 };
 use reticulum_core::error::RnsError;
 
-use crate::link::{DataKind, Link, LinkDataEventData, LinkEvent, LinkEventData, LinkId};
+use crate::link::{ActiveLink, DataKind, LinkDataEventData, LinkEvent, LinkEventData, LinkId};
 use crate::transport::Transport;
 
 /// Message type reserved for channel ACKs (matching Python implementation).
@@ -78,15 +69,26 @@ impl ChannelReceiver {
     pub async fn recv(&mut self) -> Option<InboundMessage> {
         self.rx.recv().await
     }
+
+    /// Construct a [`ChannelReceiver`] directly from an mpsc receiver.
+    ///
+    /// Useful in tests and for custom channel implementations that bypass the
+    /// full [`Channel`] machinery.
+    pub fn from_receiver(rx: mpsc::Receiver<InboundMessage>) -> Self {
+        Self { rx }
+    }
 }
 
 /// Async Channel over an established Reticulum Link.
 ///
-/// Created via [`Channel::new`]. The channel manages its own background tasks
-/// for receiving, ACKing, and retransmitting messages.
+/// Created via [`Channel::new`], which requires an [`ActiveLink`] — a
+/// capability token proving the link has completed its DH handshake.
+///
+/// Dropping this value cancels the retransmit and receive background tasks.
+#[must_use = "dropping Channel cancels retransmit and receive tasks for this link"]
 pub struct Channel {
     link_id: LinkId,
-    link: Arc<Mutex<Link>>,
+    link: ActiveLink,
     transport: Arc<Transport>,
     tx_ring: Arc<Mutex<TxRing>>,
     rtt_ms: Arc<Mutex<u32>>,
@@ -94,25 +96,21 @@ pub struct Channel {
 }
 
 impl Channel {
-    /// Attach a Channel to an already-established link.
+    /// Attach a Channel to an already-established (active) link.
     ///
-    /// `event_rx` should be a subscription to the transport's control-event bus
-    /// (`transport.subscribe_link_events()` / `transport.out_link_events()`).
-    /// `data_rx` should be a subscription to the transport's data bus
-    /// (`transport.subscribe_link_data()` / `transport.out_link_data()`).
+    /// `event_rx` / `data_rx` should be subscribed to the same bus as the link
+    /// (out-link bus for outgoing links, in-link bus for incoming links).
     pub async fn new(
-        link: Arc<Mutex<Link>>,
+        link: ActiveLink,
         transport: Arc<Transport>,
         event_rx: broadcast::Receiver<LinkEventData>,
         data_rx: broadcast::Receiver<Arc<LinkDataEventData>>,
         link_speed: LinkSpeed,
     ) -> (Channel, ChannelReceiver) {
-        let link_id = *link.lock().await.id();
-
+        let link_id = link.id();
         let tx_ring = Arc::new(Mutex::new(TxRing::new(link_speed)));
         let rx_ring = Arc::new(Mutex::new(RxRing::new()));
-        let rtt_ms = Arc::new(Mutex::new(link.lock().await.rtt_ms()));
-
+        let rtt_ms = Arc::new(Mutex::new(link.rtt_ms().await));
         let (inbound_tx, inbound_rx) = mpsc::channel(INBOUND_QUEUE_CAP);
         let cancel = CancellationToken::new();
 
@@ -159,9 +157,6 @@ impl Channel {
     }
 
     /// Send a message over the channel.
-    ///
-    /// Pushes the message into the TX ring and immediately attempts to send
-    /// any ready messages (new or timed-out retransmits).
     pub async fn send(
         &self,
         msg_type: MessageType,
@@ -178,7 +173,6 @@ impl Channel {
             .push(msg_type, payload)
             .map_err(|_| ChannelError::WindowFull)?;
 
-        // Eagerly flush new messages without waiting for the retransmit tick.
         flush_tx(
             self.link_id,
             &self.link,
@@ -219,12 +213,9 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
-/// Flush ready messages from `tx_ring` through the link.
-///
-/// Returns `Err` only on a hard packet-construction failure.
 async fn flush_tx(
     link_id: LinkId,
-    link: &Arc<Mutex<Link>>,
+    link: &ActiveLink,
     transport: &Arc<Transport>,
     tx_ring: &Arc<Mutex<TxRing>>,
     rtt_ms: &Arc<Mutex<u32>>,
@@ -232,8 +223,6 @@ async fn flush_tx(
     let now = now_ms();
     let rtt = *rtt_ms.lock().await;
 
-    // Collect envelopes to send while holding the TxRing lock, then release it
-    // before touching the link/transport locks.
     let to_send: Vec<Vec<u8>> = {
         let mut ring = tx_ring.lock().await;
         let ring_len = ring.len();
@@ -251,7 +240,7 @@ async fn flush_tx(
     };
 
     for data in to_send {
-        let packet = link.lock().await.channel_packet(&data)?;
+        let packet = link.channel_packet(&data).await?;
         transport.send_packet(packet).await;
         log::trace!("channel({}): tx {} bytes", link_id, data.len());
     }
@@ -259,19 +248,17 @@ async fn flush_tx(
     Ok(())
 }
 
-/// Send a channel ACK for `acked_seq` back through the link.
 async fn send_ack(
     link_id: LinkId,
-    link: &Arc<Mutex<Link>>,
+    link: &ActiveLink,
     transport: &Arc<Transport>,
     acked_seq: SequenceNumber,
 ) {
-    // ACK envelope: msg_type=0xFFFF, seq=acked_seq, empty payload.
     let ack_type = MessageType::new(MSG_TYPE_CHANNEL_ACK);
     match Envelope::<MAX_ENVELOPE_SIZE>::new(ack_type, acked_seq, &[]) {
         Ok(env) => {
             let packed = env.pack();
-            match link.lock().await.channel_packet(packed.as_slice()) {
+            match link.channel_packet(packed.as_slice()).await {
                 Ok(pkt) => {
                     transport.send_packet(pkt).await;
                     log::trace!("channel({}): sent ACK for seq={}", link_id, acked_seq);
@@ -287,9 +274,10 @@ async fn send_ack(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_receiver(
     link_id: LinkId,
-    link: Arc<Mutex<Link>>,
+    link: ActiveLink,
     transport: Arc<Transport>,
     tx_ring: Arc<Mutex<TxRing>>,
     rx_ring: Arc<Mutex<RxRing>>,
@@ -345,10 +333,11 @@ async fn run_receiver(
     log::debug!("channel({}): receiver task exited", link_id);
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_channel_data(
     link_id: LinkId,
     data: &[u8],
-    link: &Arc<Mutex<Link>>,
+    link: &ActiveLink,
     transport: &Arc<Transport>,
     tx_ring: &Arc<Mutex<TxRing>>,
     rx_ring: &Arc<Mutex<RxRing>>,
@@ -370,18 +359,15 @@ async fn handle_channel_data(
     let msg_type = envelope.msg_type;
     let seq = envelope.sequence;
 
-    // ACK from remote: advance our TX ring.
     if msg_type.as_u16() == MSG_TYPE_CHANNEL_ACK {
         let acked = tx_ring.lock().await.acknowledge(seq);
         if acked {
             log::trace!("channel({}): remote ACKed seq={}", link_id, seq);
-            // Opportunistically flush any new messages now that the window has grown.
             let _ = flush_tx(link_id, link, transport, tx_ring, rtt_ms).await;
         }
         return;
     }
 
-    // Normal message: feed into RX ring for in-order delivery.
     let ready = match rx_ring.lock().await.receive(envelope, now_ms()) {
         Ok(r) => r,
         Err(e) => {
@@ -398,21 +384,19 @@ async fn handle_channel_data(
             payload,
         };
         if inbound_tx.send(msg).await.is_err() {
-            // Receiver was dropped; shut down.
             log::debug!(
                 "channel({}): inbound queue closed, stopping receiver",
                 link_id
             );
             return;
         }
-        // Send ACK for each delivered message.
         send_ack(link_id, link, transport, acked_seq).await;
     }
 }
 
 async fn run_retransmit(
     link_id: LinkId,
-    link: Arc<Mutex<Link>>,
+    link: ActiveLink,
     transport: Arc<Transport>,
     tx_ring: Arc<Mutex<TxRing>>,
     rtt_ms: Arc<Mutex<u32>>,
@@ -422,7 +406,6 @@ async fn run_retransmit(
         tokio::select! {
             _ = cancel.cancelled() => break,
             _ = sleep(RETRANSMIT_INTERVAL) => {
-                // Mark failures first, then flush (which retransmits timed-out messages).
                 {
                     let mut ring = tx_ring.lock().await;
                     ring.check_failures(now_ms());

@@ -45,16 +45,97 @@ pub struct LinkDataEventData {
     pub frame: LinkDataFrame,
 }
 
-// ─── Established link state ───────────────────────────────────────────────────
+// ─── Link state machine ───────────────────────────────────────────────────────
 
-/// Key material that only exists once a link proof has been validated.
+/// Internal state of a [`Link`].
 ///
-/// Keeping this in its own struct makes it impossible to use `derived_key`
-/// before the DH exchange completes: callers that need crypto go through
-/// `Link::established()`, which returns `None` on `Pending` links.
-struct EstablishedLink {
-    peer_identity: Identity,
-    derived_key: DerivedKey,
+/// Replaces the previous `established: Option<EstablishedLink>` + redundant
+/// `status: LinkStatus` pair with a single source of truth.  Moving between
+/// variants is the only way to change the link's cryptographic state.
+///
+/// `PrivateIdentity` is intentionally **not** `Clone` (key material must not
+/// be silently duplicated), so transitions use [`std::mem::replace`] to move
+/// the key out of the old variant and into the new one.
+///
+/// The enum lives inside `Arc<Mutex<Link>>`, so the stack-size difference
+/// between variants is not observable to callers.
+#[allow(clippy::large_enum_variant)]
+enum LinkState {
+    /// DH exchange not yet complete; proof not yet received.
+    Pending { priv_identity: PrivateIdentity },
+
+    /// Proof validated; shared key material is available for encryption.
+    Active {
+        priv_identity: PrivateIdentity,
+        /// The remote peer's public identity (carried here so callers can read
+        /// it without a separate look-up).
+        #[allow(dead_code)]
+        peer_identity: Identity,
+        derived_key: DerivedKey,
+    },
+
+    /// Link has been closed; no further crypto operations are valid.
+    Closed,
+}
+
+impl LinkState {
+    fn status(&self) -> LinkStatus {
+        match self {
+            LinkState::Pending { .. } => LinkStatus::Pending,
+            LinkState::Active { .. } => LinkStatus::Active,
+            LinkState::Closed => LinkStatus::Closed,
+        }
+    }
+
+    fn priv_identity(&self) -> Option<&PrivateIdentity> {
+        match self {
+            LinkState::Pending { priv_identity } | LinkState::Active { priv_identity, .. } => {
+                Some(priv_identity)
+            }
+            LinkState::Closed => None,
+        }
+    }
+}
+
+// ─── ActiveLink capability token ─────────────────────────────────────────────
+
+/// Proof that a [`Link`] has completed its DH handshake and is ready for
+/// encrypted data exchange.
+///
+/// Constructable only inside this crate (the transport issues one when it
+/// validates a link-request proof).  [`Channel::new`](crate::channel::Channel)
+/// accepts this type instead of a raw `Arc<Mutex<Link>>`, making it a
+/// **compile-time** guarantee that channels cannot be opened on pending links.
+#[derive(Clone)]
+pub struct ActiveLink {
+    /// Cached at construction so callers never need to lock the mutex just to
+    /// read the ID.
+    id: LinkId,
+    inner: Arc<tokio::sync::Mutex<Link>>,
+}
+
+impl ActiveLink {
+    /// Only constructable from within this crate.
+    pub(crate) fn new(inner: Arc<tokio::sync::Mutex<Link>>, id: LinkId) -> Self {
+        Self { id, inner }
+    }
+
+    pub fn id(&self) -> LinkId {
+        self.id
+    }
+
+    pub async fn rtt_ms(&self) -> u32 {
+        self.inner.lock().await.rtt_ms()
+    }
+
+    /// Build a channel-data packet from `data` (already-serialised envelope).
+    pub async fn channel_packet(&self, data: &[u8]) -> Result<Packet, RnsError> {
+        self.inner.lock().await.channel_packet(data)
+    }
+
+    pub async fn destination(&self) -> DestinationDesc {
+        *self.inner.lock().await.destination()
+    }
 }
 
 // ─── Link ─────────────────────────────────────────────────────────────────────
@@ -62,13 +143,8 @@ struct EstablishedLink {
 pub struct Link {
     id: LinkId,
     destination: DestinationDesc,
-    priv_identity: PrivateIdentity,
-    /// `None` while the link is `Pending` (proof not yet validated).
-    /// `Some` once the DH exchange has completed — the only path to
-    /// constructing this is through `Link::handshake`, which calls
-    /// `LinkHandshake<AwaitingProof>::validate_proof`.
-    established: Option<EstablishedLink>,
-    status: LinkStatus,
+    /// Single source of truth for the link's cryptographic lifecycle.
+    state: LinkState,
     request_time: Instant,
     rtt: Duration,
     /// Control-plane sender: Activated / Closed.
@@ -86,9 +162,9 @@ impl Link {
         Self {
             id: AddressHash::new_empty(),
             destination,
-            priv_identity: PrivateIdentity::new_from_rand(OsRng),
-            established: None,
-            status: LinkStatus::Pending,
+            state: LinkState::Pending {
+                priv_identity: PrivateIdentity::new_from_rand(OsRng),
+            },
             request_time: Instant::now(),
             rtt: Duration::from_secs(0),
             event_tx,
@@ -116,28 +192,35 @@ impl Link {
         let link_id = LinkId::from(packet);
         log::debug!("link: create from request {}", link_id);
 
-        let mut link = Self {
+        let priv_identity =
+            PrivateIdentity::new(StaticSecret::random_from_rng(OsRng), signing_key);
+        let derived_key =
+            priv_identity.derive_key(&peer_identity.public_key, Some(link_id.as_slice()));
+
+        Ok(Self {
             id: link_id,
             destination,
-            priv_identity: PrivateIdentity::new(StaticSecret::random_from_rng(OsRng), signing_key),
-            established: None,
-            status: LinkStatus::Pending,
+            state: LinkState::Active {
+                priv_identity,
+                peer_identity,
+                derived_key,
+            },
             request_time: Instant::now(),
             rtt: Duration::from_secs(0),
             event_tx,
             data_tx,
-        };
-
-        link.handshake(peer_identity);
-
-        Ok(link)
+        })
     }
 
     pub fn request(&mut self) -> Packet {
-        let mut packet_data = PacketDataBuffer::new();
+        let priv_identity = self
+            .state
+            .priv_identity()
+            .expect("request() called on closed link");
 
-        packet_data.safe_write(self.priv_identity.as_identity().public_key.as_bytes());
-        packet_data.safe_write(self.priv_identity.as_identity().verifying_key.as_bytes());
+        let mut packet_data = PacketDataBuffer::new();
+        packet_data.safe_write(priv_identity.as_identity().public_key.as_bytes());
+        packet_data.safe_write(priv_identity.as_identity().verifying_key.as_bytes());
 
         let packet = Packet {
             header: Header {
@@ -151,7 +234,6 @@ impl Link {
             data: packet_data,
         };
 
-        self.status = LinkStatus::Pending;
         self.id = LinkId::from(&packet);
         self.request_time = Instant::now();
 
@@ -161,22 +243,24 @@ impl Link {
     pub fn prove(&mut self) -> Packet {
         log::debug!("link({}): prove", self.id);
 
-        if self.status != LinkStatus::Active {
-            self.status = LinkStatus::Active;
-            self.post_event(LinkEvent::Activated);
-        }
+        self.post_event(LinkEvent::Activated);
+
+        let priv_identity = self
+            .state
+            .priv_identity()
+            .expect("prove() called on closed link");
 
         let mut packet_data = PacketDataBuffer::new();
 
         packet_data.safe_write(self.id.as_slice());
-        packet_data.safe_write(self.priv_identity.as_identity().public_key.as_bytes());
-        packet_data.safe_write(self.priv_identity.as_identity().verifying_key.as_bytes());
+        packet_data.safe_write(priv_identity.as_identity().public_key.as_bytes());
+        packet_data.safe_write(priv_identity.as_identity().verifying_key.as_bytes());
 
-        let signature = self.priv_identity.sign(packet_data.as_slice());
+        let signature = priv_identity.sign(packet_data.as_slice());
 
         packet_data.reset();
         packet_data.safe_write(&signature.to_bytes()[..]);
-        packet_data.safe_write(self.priv_identity.as_identity().public_key.as_bytes());
+        packet_data.safe_write(priv_identity.as_identity().public_key.as_bytes());
 
         Packet {
             header: Header {
@@ -189,6 +273,31 @@ impl Link {
             context: PacketContext::LinkRequestProof,
             data: packet_data,
         }
+    }
+
+    /// Complete the DH key exchange for outgoing links (proof received from
+    /// remote).  Transitions `Pending → Active` atomically.
+    fn activate(&mut self, peer_identity: Identity) {
+        let old = std::mem::replace(&mut self.state, LinkState::Closed);
+        let priv_identity = match old {
+            LinkState::Pending { priv_identity } => priv_identity,
+            LinkState::Active { priv_identity, .. } => {
+                // Re-activation should not happen, but handle gracefully.
+                log::warn!("link({}): activate() called on already-active link", self.id);
+                priv_identity
+            }
+            LinkState::Closed => {
+                log::error!("link({}): activate() called on closed link", self.id);
+                return;
+            }
+        };
+        let derived_key = priv_identity.derive_key(&peer_identity.public_key, Some(self.id.as_slice()));
+        self.rtt = self.request_time.elapsed();
+        self.state = LinkState::Active {
+            priv_identity,
+            peer_identity,
+            derived_key,
+        };
     }
 
     fn handle_data_packet(&mut self, packet: &Packet) -> LinkHandleResult {
@@ -235,12 +344,12 @@ impl Link {
                 }
             }
             PacketContext::KeepAlive => {
-                if packet.data.len() >= 1 && packet.data.as_slice()[0] == 0xFF {
+                if !packet.data.is_empty() && packet.data.as_slice()[0] == 0xFF {
                     self.request_time = Instant::now();
                     log::trace!("link({}): keep-alive request", self.id);
                     return LinkHandleResult::KeepAlive;
                 }
-                if packet.data.len() >= 1 && packet.data.as_slice()[0] == 0xFE {
+                if !packet.data.is_empty() && packet.data.as_slice()[0] == 0xFE {
                     log::trace!("link({}): keep-alive response", self.id);
                     self.request_time = Instant::now();
                     return LinkHandleResult::None;
@@ -260,7 +369,7 @@ impl Link {
         match packet.header.packet_type {
             PacketType::Data => return self.handle_data_packet(packet),
             PacketType::Proof => {
-                if self.status == LinkStatus::Pending
+                if self.state.status() == LinkStatus::Pending
                     && packet.context == PacketContext::LinkRequestProof
                 {
                     match LinkHandshake::new(self.id).validate_proof(
@@ -269,16 +378,9 @@ impl Link {
                     ) {
                         Ok(proved) => {
                             log::debug!("link({}): has been proved", self.id);
-
-                            self.handshake(proved.into_peer_identity());
-
-                            self.status = LinkStatus::Active;
-                            self.rtt = self.request_time.elapsed();
-
+                            self.activate(proved.into_peer_identity());
                             log::debug!("link({}): activated", self.id);
-
                             self.post_event(LinkEvent::Activated);
-
                             return LinkHandleResult::Activated;
                         }
                         Err(_) => {
@@ -293,17 +395,19 @@ impl Link {
         LinkHandleResult::None
     }
 
-    /// Build a data packet. Returns `Err(InvalidArgument)` if the link is not
-    /// yet active — callers must not attempt to encrypt before `Activated`.
+    /// Build a data packet, encrypting `data` with the link's derived key.
+    /// Returns `Err(InvalidArgument)` if the link is not yet active.
     pub fn data_packet(&self, data: &[u8]) -> Result<Packet, RnsError> {
-        let established = self.established.as_ref().ok_or(RnsError::InvalidArgument)?;
+        let LinkState::Active { priv_identity, derived_key, .. } = &self.state else {
+            return Err(RnsError::InvalidArgument);
+        };
 
         let mut packet_data = PacketDataBuffer::new();
         let cipher_text_len = {
-            let cipher_text = self.priv_identity.encrypt(
+            let cipher_text = priv_identity.encrypt(
                 OsRng,
                 data,
-                &established.derived_key,
+                derived_key,
                 packet_data.acquire_buf_max(),
             )?;
             cipher_text.len()
@@ -325,19 +429,22 @@ impl Link {
     }
 
     pub fn channel_packet(&self, data: &[u8]) -> Result<Packet, RnsError> {
-        let established = self.established.as_ref().ok_or(RnsError::InvalidArgument)?;
+        let LinkState::Active { priv_identity, derived_key, .. } = &self.state else {
+            return Err(RnsError::InvalidArgument);
+        };
 
         let mut packet_data = PacketDataBuffer::new();
         let cipher_text_len = {
-            let cipher_text = self.priv_identity.encrypt(
+            let cipher_text = priv_identity.encrypt(
                 OsRng,
                 data,
-                &established.derived_key,
+                derived_key,
                 packet_data.acquire_buf_max(),
             )?;
             cipher_text.len()
         };
         packet_data.resize(cipher_text_len);
+
         Ok(Packet {
             header: Header {
                 destination_type: DestinationType::Link,
@@ -353,19 +460,22 @@ impl Link {
     }
 
     pub fn resource_packet(&self, data: &[u8], context: PacketContext) -> Result<Packet, RnsError> {
-        let established = self.established.as_ref().ok_or(RnsError::InvalidArgument)?;
+        let LinkState::Active { priv_identity, derived_key, .. } = &self.state else {
+            return Err(RnsError::InvalidArgument);
+        };
 
         let mut packet_data = PacketDataBuffer::new();
         let cipher_text_len = {
-            let cipher_text = self.priv_identity.encrypt(
+            let cipher_text = priv_identity.encrypt(
                 OsRng,
                 data,
-                &established.derived_key,
+                derived_key,
                 packet_data.acquire_buf_max(),
             )?;
             cipher_text.len()
         };
         packet_data.resize(cipher_text_len);
+
         Ok(Packet {
             header: Header {
                 destination_type: DestinationType::Link,
@@ -401,15 +511,17 @@ impl Link {
     }
 
     pub fn encrypt<'a>(&self, text: &[u8], out_buf: &'a mut [u8]) -> Result<&'a [u8], RnsError> {
-        let established = self.established.as_ref().ok_or(RnsError::InvalidArgument)?;
-        self.priv_identity
-            .encrypt(OsRng, text, &established.derived_key, out_buf)
+        let LinkState::Active { priv_identity, derived_key, .. } = &self.state else {
+            return Err(RnsError::InvalidArgument);
+        };
+        priv_identity.encrypt(OsRng, text, derived_key, out_buf)
     }
 
     pub fn decrypt<'a>(&self, text: &[u8], out_buf: &'a mut [u8]) -> Result<&'a [u8], RnsError> {
-        let established = self.established.as_ref().ok_or(RnsError::InvalidArgument)?;
-        self.priv_identity
-            .decrypt(OsRng, text, &established.derived_key, out_buf)
+        let LinkState::Active { priv_identity, derived_key, .. } = &self.state else {
+            return Err(RnsError::InvalidArgument);
+        };
+        priv_identity.decrypt(OsRng, text, derived_key, out_buf)
     }
 
     pub fn destination(&self) -> &DestinationDesc {
@@ -417,21 +529,20 @@ impl Link {
     }
 
     pub fn create_rtt(&self) -> Result<Packet, RnsError> {
-        let established = self.established.as_ref().ok_or(RnsError::InvalidArgument)?;
+        let LinkState::Active { priv_identity, derived_key, .. } = &self.state else {
+            return Err(RnsError::InvalidArgument);
+        };
 
         let rtt = self.rtt.as_secs_f32();
-        let mut buf = Vec::new();
-        {
-            buf.reserve(4);
-            rmp::encode::write_f32(&mut buf, rtt).unwrap();
-        }
+        let mut buf = Vec::with_capacity(4);
+        rmp::encode::write_f32(&mut buf, rtt).unwrap();
 
         let mut packet_data = PacketDataBuffer::new();
         let token_len = {
-            let token = self.priv_identity.encrypt(
+            let token = priv_identity.encrypt(
                 OsRng,
                 buf.as_slice(),
-                &established.derived_key,
+                derived_key,
                 packet_data.acquire_buf_max(),
             )?;
             token.len()
@@ -451,26 +562,6 @@ impl Link {
             context: PacketContext::LinkRTT,
             data: packet_data,
         })
-    }
-
-    /// Complete the DH key exchange.
-    ///
-    /// `peer_identity` must come from a validated proof — callers inside this
-    /// crate use `LinkHandshake<Proved>::into_peer_identity()`, so the only
-    /// path to populating `established` is through signature verification.
-    fn handshake(&mut self, peer_identity: Identity) {
-        log::debug!("link({}): handshake", self.id);
-
-        self.status = LinkStatus::Handshake;
-
-        let derived_key = self
-            .priv_identity
-            .derive_key(&peer_identity.public_key, Some(self.id.as_slice()));
-
-        self.established = Some(EstablishedLink {
-            peer_identity,
-            derived_key,
-        });
     }
 
     fn post_event(&self, event: LinkEvent) {
@@ -494,11 +585,13 @@ impl Link {
     }
 
     pub fn close(&mut self) {
-        self.status = LinkStatus::Closed;
+        self.state = LinkState::Closed;
         self.post_event(LinkEvent::Closed);
         log::warn!("link: close {}", self.id);
     }
 
+    /// Restart the link: drop the derived key material and revert to Pending,
+    /// keeping the same private identity so the link ID can be reused.
     pub fn restart(&mut self) {
         log::warn!(
             "link({}): restart after {}s",
@@ -506,9 +599,14 @@ impl Link {
             self.request_time.elapsed().as_secs()
         );
 
-        // Drop the key material; a new handshake will repopulate it.
-        self.established = None;
-        self.status = LinkStatus::Pending;
+        let old = std::mem::replace(&mut self.state, LinkState::Closed);
+        let priv_identity = match old {
+            LinkState::Active { priv_identity, .. } | LinkState::Pending { priv_identity } => {
+                priv_identity
+            }
+            LinkState::Closed => PrivateIdentity::new_from_rand(OsRng),
+        };
+        self.state = LinkState::Pending { priv_identity };
     }
 
     pub fn elapsed(&self) -> Duration {
@@ -516,7 +614,7 @@ impl Link {
     }
 
     pub fn status(&self) -> LinkStatus {
-        self.status
+        self.state.status()
     }
 
     pub fn id(&self) -> &LinkId {
@@ -525,5 +623,112 @@ impl Link {
 
     pub fn rtt_ms(&self) -> u32 {
         (self.rtt.as_millis() as u32).max(25)
+    }
+}
+
+// ─── Tests ────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use reticulum_core::identity::PrivateIdentity;
+    use reticulum_core::destination::DestinationName;
+    use reticulum_core::destination::SingleInputDestination;
+    use reticulum_core::hash::AddressHash;
+    use tokio::sync::broadcast;
+
+    fn make_link() -> Link {
+        let (event_tx, _) = broadcast::channel(4);
+        let (data_tx, _) = broadcast::channel(4);
+        let identity = PrivateIdentity::new_from_rand(OsRng);
+        let dest = SingleInputDestination::new(
+            identity,
+            DestinationName::new("test", "link"),
+        );
+        Link::new(dest.desc, event_tx, data_tx)
+    }
+
+    #[test]
+    fn new_link_is_pending() {
+        let link = make_link();
+        assert_eq!(link.status(), LinkStatus::Pending);
+    }
+
+    #[test]
+    fn close_transitions_to_closed() {
+        let mut link = make_link();
+        link.close();
+        assert_eq!(link.status(), LinkStatus::Closed);
+    }
+
+    #[test]
+    fn channel_packet_on_pending_returns_error() {
+        let link = make_link();
+        assert!(link.channel_packet(b"hello").is_err());
+    }
+
+    #[test]
+    fn data_packet_on_pending_returns_error() {
+        let link = make_link();
+        assert!(link.data_packet(b"hello").is_err());
+    }
+
+    #[test]
+    fn restart_from_pending_stays_pending() {
+        let mut link = make_link();
+        link.restart();
+        assert_eq!(link.status(), LinkStatus::Pending);
+    }
+
+    #[test]
+    fn restart_from_closed_becomes_pending() {
+        let mut link = make_link();
+        link.close();
+        link.restart();
+        // restart from Closed uses a freshly generated key
+        assert_eq!(link.status(), LinkStatus::Pending);
+    }
+
+    #[test]
+    fn new_from_request_is_active() {
+        let (event_tx, _) = broadcast::channel(4);
+        let (data_tx, _) = broadcast::channel(4);
+
+        // Build a fake link-request packet (two x25519 public keys).
+        let requester_id = PrivateIdentity::new_from_rand(OsRng);
+        let responder_id = PrivateIdentity::new_from_rand(OsRng);
+        let responder_dest = SingleInputDestination::new(
+            responder_id,
+            DestinationName::new("test", "link"),
+        );
+
+        // Build a packet that looks like a link request.
+        let mut packet_data = PacketDataBuffer::new();
+        packet_data.safe_write(requester_id.as_identity().public_key.as_bytes());
+        packet_data.safe_write(requester_id.as_identity().verifying_key.as_bytes());
+
+        let packet = Packet {
+            header: Header {
+                packet_type: PacketType::LinkRequest,
+                ..Default::default()
+            },
+            ifac: None,
+            destination: responder_dest.desc.address_hash,
+            transport: None,
+            context: PacketContext::None,
+            data: packet_data,
+        };
+
+        let signing_key = responder_dest.sign_key().clone();
+        let link = Link::new_from_request(
+            &packet,
+            signing_key,
+            responder_dest.desc,
+            event_tx,
+            data_tx,
+        )
+        .expect("new_from_request");
+
+        assert_eq!(link.status(), LinkStatus::Active);
     }
 }

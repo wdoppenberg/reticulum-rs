@@ -10,7 +10,7 @@ This project brings Reticulum's capabilities to the Rust ecosystem, enabling emb
 - 📡 Cryptographic mesh networking
 - 🔐 Trustless routing via identity-based keys
 - 📁 Lightweight and modular design
-- 🧱 Support for multiple transport layers (TCP, serial, Kaonic)
+- 🧱 Support for multiple transport layers (TCP, serial)
 - 🔌 Easily embeddable in embedded devices and tactical radios
 - 🧪 Example clients for testnets and real deployments
 
@@ -30,11 +30,7 @@ Reticulum-rs/
 │   ├── lib.rs
 │   ├── transport.rs
 │   └── packet.rs
-├── proto/               # Protocol definitions (e.g. for Kaonic)
-│   └── kaonic/
-│       └── kaonic.proto
 ├── examples/            # Example clients and servers
-│   ├── kaonic_client.rs
 │   ├── link_client.rs
 │   ├── tcp_client.rs
 │   ├── tcp_server.rs
@@ -48,7 +44,6 @@ Reticulum-rs/
 ### Prerequisites
 
 * Rust (edition 2021+)
-* `protoc` for compiling `.proto` files (if using gRPC/Kaonic modules)
 
 ### Build
 
@@ -62,13 +57,10 @@ cargo build --release
 # TCP client example
 cargo run --example tcp_client
 
-# Kaonic mesh test client
-cargo run --example kaonic_client
 ```
 
 ## Use Cases
 
-* 🛰 Tactical radio mesh with Kaonic
 * 🕵️‍♂️ Covert communication using serial or sub-GHz transceivers
 * 🚁 UAV-to-ground resilient C2 and telemetry
 * 🧱 Decentralized infrastructure-free messaging

@@ -271,14 +271,14 @@ impl<'a, const N: usize> InterfaceRouter<'a, N> {
     ///
     /// Callers that need guaranteed delivery to all targets should use the
     /// async [`route`](Self::route) instead.
+    #[allow(clippy::result_large_err)]
     pub fn try_route(&self, msg: TxMessage) -> Result<(), TxMessage> {
         let mut all_ok = true;
         for entry in &self.ifaces {
-            if self.should_send(msg.tx_type, entry.address) {
-                if entry.tx.try_send(msg).is_err() {
+            if self.should_send(msg.tx_type, entry.address)
+                && entry.tx.try_send(msg).is_err() {
                     all_ok = false;
                 }
-            }
         }
         if all_ok {
             Ok(())
@@ -289,7 +289,7 @@ impl<'a, const N: usize> InterfaceRouter<'a, N> {
 
     fn should_send(&self, tx_type: TxMessageType, addr: AddressHash) -> bool {
         match tx_type {
-            TxMessageType::Broadcast(exclude) => exclude.map_or(true, |a| a != addr),
+            TxMessageType::Broadcast(exclude) => exclude != Some(addr),
             TxMessageType::Direct(target) => target == addr,
         }
     }

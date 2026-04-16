@@ -144,9 +144,18 @@ where
                     Ok(n) => {
                         match Packet::deserialize(&mut InputBuffer::new(&buf[..n])) {
                             Ok(packet) => {
-                                let _ = rx_send
-                                    .send(RxMessage { address: iface_addr, packet })
-                                    .await;
+                                // Non-blocking send: if the shared RX channel is
+                                // full we drop the packet rather than blocking
+                                // here.  Blocking in the receive arm of a biased
+                                // select would starve the TX arm, eventually
+                                // filling the TX queue and deadlocking the
+                                // transport handler.
+                                if rx_send
+                                    .try_send(RxMessage { address: iface_addr, packet })
+                                    .is_err()
+                                {
+                                    log::warn!("iface {iface_addr}: RX queue full, dropping inbound packet");
+                                }
                             }
                             Err(e) => log::warn!("iface {iface_addr}: deserialise failed: {e:?}"),
                         }
@@ -240,7 +249,7 @@ impl InterfaceManager {
         I: TokioInterface + 'static,
         I::Error: std::fmt::Debug + Send,
     {
-        let channel = self.new_channel(16);
+        let channel = self.new_channel(256);
         let address = *channel.address();
         let cancel = self.cancel.clone();
         task::spawn(drive_interface(iface, channel, cancel));
@@ -255,15 +264,17 @@ impl InterfaceManager {
         self.ifaces.retain(|iface| !iface.stop.is_cancelled());
     }
 
-    pub async fn send(&self, message: TxMessage) {
+    pub fn send(&self, message: TxMessage) {
         for iface in &self.ifaces {
             let should_send = match message.tx_type {
-                TxMessageType::Broadcast(address) => address.map_or(true, |a| a != iface.address),
+                TxMessageType::Broadcast(address) => address != Some(iface.address),
                 TxMessageType::Direct(address) => address == iface.address,
             };
 
             if should_send && !iface.stop.is_cancelled() {
-                let _ = iface.tx_send.send(message).await;
+                if iface.tx_send.try_send(message).is_err() {
+                    log::warn!("iface {}: TX queue full, dropping packet", iface.address);
+                }
             }
         }
     }

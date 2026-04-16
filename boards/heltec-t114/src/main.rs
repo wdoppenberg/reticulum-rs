@@ -41,6 +41,9 @@
 #![no_std]
 #![no_main]
 
+#[cfg(feature = "ui")]
+mod ui;
+
 use defmt_rtt as _;
 use panic_probe as _;
 

@@ -83,6 +83,7 @@ pub struct AutoInterface {
     data_sock: UdpSocket,
     /// Live peer table, maintained by background discovery tasks.
     peers: PeerTable,
+    #[allow(dead_code)]
     data_port: u16,
     /// SHA-256 deduplication queue (owned solely by the receive path).
     dedup: VecDeque<([u8; 32], Instant)>,

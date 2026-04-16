@@ -82,6 +82,7 @@ mod sam_state {
     pub struct HelloDone;
     pub struct SessionReady {
         pub session_id: String,
+        #[allow(dead_code)]
         pub our_destination: String,
     }
     pub struct DataPipe;

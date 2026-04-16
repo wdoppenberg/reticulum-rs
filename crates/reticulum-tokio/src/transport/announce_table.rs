@@ -12,6 +12,7 @@ use reticulum_core::packet::{
 #[derive(Clone)]
 pub struct AnnounceEntry {
     pub packet: Packet,
+    #[allow(dead_code)]
     pub timestamp: Instant,
     pub timeout: Instant,
     pub received_from: AddressHash,
@@ -95,6 +96,7 @@ impl AnnounceCache {
         None
     }
 
+    #[allow(dead_code)]
     fn clear(&mut self) {
         self.newer.as_mut().unwrap().clear();
         self.older = None;
@@ -171,6 +173,7 @@ impl AnnounceTable {
         false
     }
 
+    #[allow(dead_code)]
     pub fn clear(&mut self) {
         self.map.clear();
         self.responses.clear();
@@ -188,7 +191,7 @@ impl AnnounceTable {
             .and_then(|e| e.retransmit(transport_id))
     }
 
-    pub fn to_retransmit(&mut self, transport_id: &AddressHash) -> Vec<TxMessage> {
+    pub fn drain_retransmits(&mut self, transport_id: &AddressHash) -> Vec<TxMessage> {
         let mut messages = vec![];
         let mut completed = vec![];
 

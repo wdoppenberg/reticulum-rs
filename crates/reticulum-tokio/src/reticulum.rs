@@ -422,26 +422,45 @@ async fn initialize_interfaces(
                         tokio::spawn(async move { server.run(mgr, cancel).await });
                     }
                     "client" => {
-                        // Retry a few times to allow a peer server to finish binding.
-                        let mut connected = false;
-                        for attempt in 0..10u32 {
-                            match TcpClient::connect(&addr).await {
-                                Ok(client) => {
-                                    interface_manager.lock().await.spawn_interface(client);
-                                    connected = true;
-                                    break;
-                                }
-                                Err(_) if attempt < 9 => {
-                                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-                                }
-                                Err(e) => {
-                                    log::error!("tcp_client '{}': failed to connect: {e}", name);
+                        // Spawn a background task that keeps retrying the
+                        // connection until it succeeds or the node is shut down.
+                        // This mirrors TcpServer's behaviour and allows the peer
+                        // server to start at any time after this node.
+                        let addr = addr.clone();
+                        let name = name.clone();
+                        let mgr = interface_manager.clone();
+                        let cancel = cancel.clone();
+                        tokio::spawn(async move {
+                            let mut attempt = 0u32;
+                            loop {
+                                tokio::select! {
+                                    biased;
+                                    _ = cancel.cancelled() => break,
+                                    result = TcpClient::connect(&addr) => {
+                                        match result {
+                                            Ok(client) => {
+                                                mgr.lock().await.spawn_interface(client);
+                                                break;
+                                            }
+                                            Err(e) => {
+                                                let delay = if attempt < 5 {
+                                                    std::time::Duration::from_millis(500)
+                                                } else {
+                                                    std::time::Duration::from_secs(5)
+                                                };
+                                                log::debug!(
+                                                    "tcp_client '{}': connect to <{}>: {e}, \
+                                                     retry in {}ms",
+                                                    name, addr, delay.as_millis()
+                                                );
+                                                attempt += 1;
+                                                tokio::time::sleep(delay).await;
+                                            }
+                                        }
+                                    }
                                 }
                             }
-                        }
-                        if !connected {
-                            log::warn!("tcp_client '{}': giving up after retries", name);
-                        }
+                        });
                     }
                     mode => {
                         log::warn!("Unknown TCP mode '{}' for interface '{}'", mode, name);

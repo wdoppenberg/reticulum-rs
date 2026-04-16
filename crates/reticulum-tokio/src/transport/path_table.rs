@@ -6,10 +6,12 @@ use reticulum_core::{
 };
 
 pub struct PathEntry {
+    #[allow(dead_code)]
     pub timestamp: Instant,
     pub received_from: AddressHash,
     pub hops: u8,
     pub iface: AddressHash,
+    #[allow(dead_code)]
     pub packet_hash: Hash,
 }
 
@@ -34,10 +36,12 @@ impl PathTable {
             .map(|entry| (entry.received_from, entry.iface))
     }
 
+    #[allow(dead_code)]
     pub fn next_hop_iface(&self, destination: &AddressHash) -> Option<AddressHash> {
         self.map.get(destination).map(|entry| entry.iface)
     }
 
+    #[allow(dead_code)]
     pub fn next_hop(&self, destination: &AddressHash) -> Option<AddressHash> {
         self.map.get(destination).map(|entry| entry.received_from)
     }
@@ -107,6 +111,7 @@ impl PathTable {
         )
     }
 
+    #[allow(dead_code)]
     pub fn refresh(&mut self, destination: &AddressHash) {
         if let Some(entry) = self.map.get_mut(destination) {
             entry.timestamp = Instant::now();

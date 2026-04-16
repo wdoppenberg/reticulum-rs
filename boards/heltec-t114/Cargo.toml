@@ -10,6 +10,10 @@ description = "Reticulum node firmware for the Heltec T114 (nRF52840 + SX1262)."
 name = "heltec-t114"
 path = "src/main.rs"
 
+[features]
+default = []
+ui = ["reticulum-node/ui"]
+
 [dependencies]
 # ── Reticulum stack ────────────────────────────────────────────────────────────
 reticulum-node    = { path = "../../crates/reticulum-node",    default-features = false, features = ["embassy", "lora", "storage"] }

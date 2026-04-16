@@ -13,8 +13,6 @@ use crate::{
     hash::{AddressHash, Hash},
 };
 
-#[cfg(feature = "alloc")]
-use alloc::string::String;
 
 pub const PUBLIC_KEY_LENGTH: usize = ed25519_dalek::PUBLIC_KEY_LENGTH;
 
@@ -48,7 +46,7 @@ pub trait HashIdentity {
     fn as_address_hash_slice(&self) -> &[u8];
 }
 
-#[derive(Copy, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub struct Identity {
     pub public_key: PublicKey,
     pub verifying_key: VerifyingKey,

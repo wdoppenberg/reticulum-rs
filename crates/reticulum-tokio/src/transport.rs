@@ -17,6 +17,7 @@ use tokio::sync::broadcast;
 use tokio::sync::Mutex;
 use tokio::sync::MutexGuard;
 
+use crate::link::ActiveLink;
 use crate::link::Link;
 use crate::link::LinkDataEventData;
 use crate::link::LinkEventData;
@@ -174,7 +175,7 @@ impl Transport {
         let (received_data_tx, _) = tokio::sync::broadcast::channel(16);
         let (iface_messages_tx, _) = tokio::sync::broadcast::channel(16);
 
-        let iface_manager = InterfaceManager::new(16);
+        let iface_manager = InterfaceManager::new(256);
 
         let rx_receiver = iface_manager.receiver();
 
@@ -390,11 +391,54 @@ impl Transport {
     }
 
     pub async fn find_out_link(&self, link_id: &AddressHash) -> Option<Arc<Mutex<Link>>> {
-        self.handler.lock().await.out_links.get(link_id).cloned()
+        // `out_links` is keyed by destination address hash, not by link ID.
+        // Scan values to find the link whose ephemeral ID matches.
+        let handler = self.handler.lock().await;
+        for link in handler.out_links.values() {
+            if link.lock().await.id() == link_id {
+                return Some(link.clone());
+            }
+        }
+        None
     }
 
     pub async fn find_in_link(&self, link_id: &AddressHash) -> Option<Arc<Mutex<Link>>> {
+        // `in_links` is keyed by link ID — direct lookup is correct.
         self.handler.lock().await.in_links.get(link_id).cloned()
+    }
+
+    /// Returns an [`ActiveLink`] token for an outgoing link, but **only** if
+    /// the link is in the `Active` state.  Returns `None` if the link is still
+    /// pending or has already closed.
+    ///
+    /// Call this after receiving [`LinkEvent::Activated`] on the out-link bus
+    /// to get the capability token required by [`Channel::new`].
+    ///
+    /// Note: `out_links` is keyed by *destination address hash*, not by link
+    /// ID.  We scan the values to find the link whose ephemeral link ID matches
+    /// the one in the activation event.
+    pub async fn find_active_out_link(&self, link_id: &LinkId) -> Option<ActiveLink> {
+        let handler = self.handler.lock().await;
+        for link in handler.out_links.values() {
+            let l = link.lock().await;
+            if l.id() == link_id && l.status() == LinkStatus::Active {
+                return Some(ActiveLink::new(link.clone(), *link_id));
+            }
+        }
+        None
+    }
+
+    /// Returns an [`ActiveLink`] token for an incoming link, but **only** if
+    /// the link is in the `Active` state.
+    ///
+    /// Call this after receiving [`LinkEvent::Activated`] on the in-link bus.
+    pub async fn find_active_in_link(&self, link_id: &LinkId) -> Option<ActiveLink> {
+        let inner = self.handler.lock().await.in_links.get(link_id).cloned()?;
+        if inner.lock().await.status() == LinkStatus::Active {
+            Some(ActiveLink::new(inner, *link_id))
+        } else {
+            None
+        }
     }
 
     pub async fn link(&self, destination: DestinationDesc) -> Arc<Mutex<Link>> {
@@ -476,7 +520,7 @@ impl Transport {
     }
 
     pub async fn add_destination(
-        &mut self,
+        &self,
         identity: PrivateIdentity,
         name: DestinationName,
     ) -> Arc<Mutex<SingleInputDestination>> {
@@ -528,7 +572,7 @@ impl TransportHandler {
 
     async fn send(&self, message: TxMessage) {
         self.packet_cache.lock().await.update(&message.packet);
-        self.iface_manager.lock().await.send(message).await;
+        self.iface_manager.lock().await.send(message);
     }
 
     fn has_destination(&self, address: &AddressHash) -> bool {
@@ -1038,7 +1082,7 @@ async fn handle_cleanup<'a>(handler: MutexGuard<'a, TransportHandler>) {
 
 async fn retransmit_announces<'a>(mut handler: MutexGuard<'a, TransportHandler>) {
     let transport_id = handler.config.node_address;
-    let messages = handler.announce_table.to_retransmit(&transport_id);
+    let messages = handler.announce_table.drain_retransmits(&transport_id);
 
     for message in messages {
         handler.send(message).await;
@@ -1083,68 +1127,76 @@ async fn manage_transport(
 
         tokio::spawn(async move {
             loop {
-                let mut rx_receiver = rx_receiver.lock().await;
+                // Receive one message, releasing the rx_receiver lock immediately
+                // after the recv() returns.  This is critical: if we held the
+                // lock across the subsequent handler.lock().await we would block
+                // drive_interface from draining the RX channel, which in turn
+                // prevents it from processing the TX channel, causing a deadlock
+                // when handler.send() tries to enqueue a TX packet.
+                let message = {
+                    let mut rx = rx_receiver.lock().await;
+                    tokio::select! {
+                        biased;
+                        _ = cancel.cancelled() => None,
+                        msg = rx.recv() => msg,
+                    }
+                };
+
+                let Some(message) = message else { break };
+
+                let _ = iface_messages_tx.send(message);
+
+                let packet = message.packet;
 
                 if cancel.is_cancelled() {
                     break;
                 }
 
-                tokio::select! {
-                    _ = cancel.cancelled() => {
-                        break;
-                    },
-                    Some(message) = rx_receiver.recv() => {
-                        let _ = iface_messages_tx.send(message);
+                let mut handler = handler.lock().await;
 
-                        let packet = message.packet;
+                if PACKET_TRACE {
+                    log::debug!("tp: << rx({}) = {} {}", message.address, packet, packet.hash());
+                }
 
-                        let mut handler = handler.lock().await;
+                if handle_fixed_destinations(
+                    &packet,
+                    &mut handler,
+                    message.address
+                ).await {
+                    continue;
+                }
 
-                        if PACKET_TRACE {
-                            log::debug!("tp: << rx({}) = {} {}", message.address, packet, packet.hash());
-                        }
+                if !handler.filter_duplicate_packets(&packet).await {
+                    log::debug!(
+                        "tp({}): dropping duplicate packet: dst={}, ctx={:?}, type={:?}",
+                        handler.config.name,
+                        packet.destination,
+                        packet.context,
+                        packet.header.packet_type
+                    );
+                    continue;
+                }
 
-                        if handle_fixed_destinations(
-                            &packet,
-                            &mut handler,
-                            message.address
-                        ).await {
-                            continue;
-                        }
+                if handler.config.broadcast && packet.header.packet_type != PacketType::Announce {
+                    // TODO: remove seperate handling for announces in handle_announce.
+                    // Send broadcast message expect current iface address
+                    handler.send(TxMessage { tx_type: TxMessageType::Broadcast(Some(message.address)), packet }).await;
+                }
 
-                        if !handler.filter_duplicate_packets(&packet).await {
-                            log::debug!(
-                                "tp({}): dropping duplicate packet: dst={}, ctx={:?}, type={:?}",
-                                handler.config.name,
-                                packet.destination,
-                                packet.context,
-                                packet.header.packet_type
-                            );
-                            continue;
-                        }
-
-                        if handler.config.broadcast && packet.header.packet_type != PacketType::Announce {
-                            // TODO: remove seperate handling for announces in handle_announce.
-                            // Send broadcast message expect current iface address
-                            handler.send(TxMessage { tx_type: TxMessageType::Broadcast(Some(message.address)), packet }).await;
-                        }
-
-                        match packet.header.packet_type {
-                            PacketType::Announce => handle_announce(
-                                &packet,
-                                handler,
-                                message.address
-                            ).await,
-                            PacketType::LinkRequest => handle_link_request(
-                                &packet,
-                                message.address,
-                                handler
-                            ).await,
-                            PacketType::Proof => handle_proof(&packet, handler).await,
-                            PacketType::Data => handle_data(&packet, handler).await,
-                        }
-                    }
-                };
+                match packet.header.packet_type {
+                    PacketType::Announce => handle_announce(
+                        &packet,
+                        handler,
+                        message.address
+                    ).await,
+                    PacketType::LinkRequest => handle_link_request(
+                        &packet,
+                        message.address,
+                        handler
+                    ).await,
+                    PacketType::Proof => handle_proof(&packet, handler).await,
+                    PacketType::Data => handle_data(&packet, handler).await,
+                }
             }
         })
     };

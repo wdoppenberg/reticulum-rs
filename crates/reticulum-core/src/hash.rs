@@ -10,8 +10,6 @@ use sha2::{Digest, Sha256};
 
 use crate::error::RnsError;
 
-#[cfg(feature = "alloc")]
-use alloc::string::String;
 
 pub const HASH_SIZE: usize = <<Sha256 as OutputSizeUser>::OutputSize as Unsigned>::USIZE;
 pub const ADDRESS_HASH_SIZE: usize = 16;

@@ -9,11 +9,11 @@ categories = ["network-programming"]
 keywords = ["reticulum", "mesh", "radio", "async"]
 
 description = """
-Reticulum-rs is a Rust implementation of the Reticulum Network Stack - a cryptographic, 
-decentralised, and resilient mesh networking protocol designed for communication over any physical 
+Reticulum-rs is a Rust implementation of the Reticulum Network Stack - a cryptographic,
+decentralised, and resilient mesh networking protocol designed for communication over any physical
 layer.
 
-This project brings Reticulum's capabilities to the Rust ecosystem, enabling embedded, and 
+This project brings Reticulum's capabilities to the Rust ecosystem, enabling embedded, and
 constrained deployments with maximum performance and minimal dependencies.
 """
 
@@ -21,13 +21,10 @@ constrained deployments with maximum performance and minimal dependencies.
 # Modular crates
 reticulum-core = { path = "../reticulum-core", version = "0.1.0" }
 reticulum-tokio = { path = "../reticulum-tokio", version = "0.1.0", optional = true }
-reticulum-kaonic = { path = "../reticulum-kaonic", version = "0.1.0", optional = true }
 
 [features]
 default = ["tokio"]
 tokio = ["dep:reticulum-tokio"]
-kaonic = ["reticulum-kaonic"]
 
 [dev-dependencies]
 tokio = { version = "1.44.2", features = ["test-util"] }
-

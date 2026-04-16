@@ -60,7 +60,7 @@ pub const RAND_HASH_LENGTH: usize = 10;
 pub const MIN_ANNOUNCE_DATA_LENGTH: usize =
     PUBLIC_KEY_LENGTH * 2 + NAME_HASH_LENGTH + RAND_HASH_LENGTH + SIGNATURE_LENGTH;
 
-#[derive(Copy, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub struct DestinationName {
     pub hash: Hash,
 }
@@ -93,7 +93,7 @@ impl DestinationName {
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub struct DestinationDesc {
     pub identity: Identity,
     pub address_hash: AddressHash,

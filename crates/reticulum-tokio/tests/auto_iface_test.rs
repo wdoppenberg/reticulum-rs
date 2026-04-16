@@ -139,8 +139,7 @@ async fn two_nodes_discover_each_other() {
         .send(TxMessage {
             tx_type: TxMessageType::Broadcast(None),
             packet: pkt,
-        })
-        .await;
+        });
 
     let rx_b = mgr_b.receiver();
     let result = tokio::time::timeout(Duration::from_secs(3), async {

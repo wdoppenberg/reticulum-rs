@@ -647,10 +647,7 @@ impl Resource {
         let part_hash = Self::get_map_hash(&part_data);
 
         // Find matching hash in hashmap, starting from the first unreceived part.
-        let consecutive_index = match self.consecutive_completed_height {
-            Some(h) => h, // search from the last delivered part onward
-            None => 0,    // nothing delivered yet — start from the beginning
-        };
+        let consecutive_index = self.consecutive_completed_height.unwrap_or_default();
 
         for i in consecutive_index..(consecutive_index + self.window).min(self.hashmap.len()) {
             if let Some(expected_hash) = self.hashmap[i] {

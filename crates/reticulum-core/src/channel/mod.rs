@@ -16,4 +16,3 @@ pub use types::{
 
 #[cfg(any(feature = "alloc", feature = "heapless"))]
 pub use state::{RxMessageEntry, RxRing, TxMessageEntry, TxRing};
-pub use types::*;

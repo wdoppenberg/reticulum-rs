@@ -8,13 +8,13 @@ using `probe-rs`.
 
 ## Hardware required
 
-| Item | Notes |
-|------|-------|
-| Heltec T114 | nRF52840 + SX1262, integrated LoRa antenna connector |
-| Debug probe | J-Link, CMSIS-DAP, or compatible (e.g. nRF52840-DK acts as a J-Link) |
-| SWD cable | 10-pin or 6-pin TagConnect / dupont depending on your probe |
-| LoRa antenna | 868 MHz (EU) or 915 MHz (US/AUS) — **do not TX without one** |
-| USB-C cable | Power only; not used for flashing |
+| Item         | Notes                                                                |
+|--------------|----------------------------------------------------------------------|
+| Heltec T114  | nRF52840 + SX1262, integrated LoRa antenna connector                 |
+| Debug probe  | J-Link, CMSIS-DAP, or compatible (e.g. nRF52840-DK acts as a J-Link) |
+| SWD cable    | 10-pin or 6-pin TagConnect / dupont depending on your probe          |
+| LoRa antenna | 868 MHz (EU) or 915 MHz (US/AUS) — **do not TX without one**         |
+| USB-C cable  | Power only; not used for flashing                                    |
 
 The T114 exposes a 4-pin SWD header (SWDIO, SWDCLK, GND, VCC) near the
 USB-C connector.  Consult the Heltec schematic for the exact pad locations.

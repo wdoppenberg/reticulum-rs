@@ -120,7 +120,9 @@ impl Default for ReticulumConfig {
             shared_instance_port: 37428,
             instance_control_port: 37429,
             rpc_key: None,
-            enable_transport: false,
+            // Transport is enabled by default — applications that need to link,
+            // announce, and route (e.g. chat) cannot function without it.
+            enable_transport: true,
             network_identity: None,
             link_mtu_discovery: true,
             enable_remote_management: false,
@@ -318,12 +320,26 @@ impl Config {
         Ok(config)
     }
 
-    /// Create a default configuration
+    /// Create a default configuration.
+    ///
+    /// Transport is enabled and a single `AutoInterface` (local multicast
+    /// discovery) is included so a fresh node can communicate on the local
+    /// network without any manual configuration.
     pub fn default_config() -> Self {
+        let mut interfaces = HashMap::new();
+        interfaces.insert(
+            "auto".to_string(),
+            InterfaceConfig::Auto(AutoInterfaceConfig {
+                enabled: true,
+                group: None,
+                discovery_port: None,
+                data_port: None,
+            }),
+        );
         Self {
             reticulum: ReticulumConfig::default(),
             logging: LoggingConfig::default(),
-            interfaces: HashMap::new(),
+            interfaces,
         }
     }
 
@@ -368,11 +384,18 @@ impl Config {
         Ok(())
     }
 
-    /// Generate a default configuration file content
+    /// Generate a default configuration file content.
+    ///
+    /// Transport is enabled and an `AutoInterface` is active so the node works
+    /// on a local network without any further editing.
     pub fn generate_default_toml() -> String {
         r#"# Reticulum Network Stack Configuration
+# Generated automatically on first run.  Edit and restart to apply changes.
 
 [reticulum]
+# Enable routing/transport functionality.  Must be true for chat applications.
+enable_transport = true
+
 # Share this instance with other local processes
 share_instance = true
 
@@ -381,9 +404,6 @@ shared_instance_port = 37428
 
 # Port for instance control/RPC
 instance_control_port = 37429
-
-# Enable transport/routing functionality
-enable_transport = false
 
 # Enable automatic link MTU discovery
 link_mtu_discovery = true
@@ -394,49 +414,37 @@ use_implicit_proof = true
 # Allow network probes
 allow_probes = false
 
-# Enable discovery features
-enable_discovery = false
-
 # Panic on interface errors
 panic_on_interface_error = false
 
 [logging]
-# Log level (0-7, where 7 is most verbose)
-# 0 = Critical, 1 = Error, 2 = Warning, 3 = Notice
-# 4 = Info, 5 = Verbose, 6 = Debug, 7 = Extreme
+# Log level (0-7 where 7 is most verbose)
+# 0 = Critical  1 = Error  2 = Warning  3 = Notice
+# 4 = Info      5 = Verbose 6 = Debug   7 = Extreme
 loglevel = 4
 
-# Example TCP server interface
+# ── Interfaces ────────────────────────────────────────────────────────────────
+# AutoInterface: discovers and connects to nearby Reticulum nodes over the
+# local network using multicast UDP.  Works on most LANs with no extra setup.
+[interfaces.auto]
+type   = "auto"
+enabled = true
+
+# TCP server — accept connections from other nodes:
 # [interfaces.tcp_server]
-# type = "tcp"
+# type    = "tcp"
 # enabled = true
-# mode = "server"
+# mode    = "server"
 # address = "0.0.0.0"
-# port = 4242
-# outbound = true
+# port    = 4242
 
-# Example TCP client interface
+# TCP client — connect to a known Reticulum node:
 # [interfaces.tcp_client]
-# type = "tcp"
+# type    = "tcp"
 # enabled = true
-# mode = "client"
-# address = "127.0.0.1"
-# port = 4242
-# outbound = true
-
-# Example UDP interface
-# [interfaces.udp]
-# type = "udp"
-# enabled = true
-# address = "0.0.0.0"
-# port = 4242
-# forward_broadcasts = true
-# outbound = true
-
-# Example Auto interface (local network discovery)
-# [interfaces.auto]
-# type = "auto"
-# enabled = true
+# mode    = "client"
+# address = "192.168.1.2"
+# port    = 4242
 "#
         .to_string()
     }
