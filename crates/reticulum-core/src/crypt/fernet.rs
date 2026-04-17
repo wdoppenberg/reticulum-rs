@@ -2,14 +2,14 @@ use core::cmp;
 use core::convert::From;
 
 use aes::cipher::block_padding::Pkcs7;
-use aes::cipher::BlockDecryptMut;
+use aes::cipher::BlockModeDecrypt;
 use aes::cipher::Key;
-use aes::cipher::Unsigned;
-use cbc::cipher::BlockEncryptMut;
+use cbc::cipher::BlockModeEncrypt;
 use cbc::cipher::KeyIvInit;
-use crypto_common::{IvSizeUser, KeySizeUser, OutputSizeUser};
-use hmac::{Hmac, Mac};
-use rand_core::CryptoRngCore;
+use crypto_common::typenum::Unsigned;
+use crypto_common::{Generate, IvSizeUser, KeySizeUser, OutputSizeUser};
+use hmac::{Hmac, KeyInit, Mac};
+use rand_core::CryptoRng;
 use sha2::Sha256;
 
 use crate::error::RnsError;
@@ -41,7 +41,7 @@ pub struct Token<'a>(&'a [u8]);
 // eight byte TIMESTAMP field at the start of each token. These fields are
 // not relevant to Reticulum. They are therefore stripped from this
 // implementation, since they incur overhead and leak initiator metadata.
-pub struct Fernet<R: CryptoRngCore> {
+pub struct Fernet<R: CryptoRng> {
     rng: R,
     sign_key: [u8; AES_KEY_SIZE],
     enc_key: AesKey,
@@ -84,7 +84,7 @@ impl<'a> From<&'a [u8]> for Token<'a> {
     }
 }
 
-impl<R: CryptoRngCore + Copy> Fernet<R> {
+impl<R: CryptoRng + Copy> Fernet<R> {
     pub fn new(sign_key: [u8; AES_KEY_SIZE], enc_key: AesKey, rng: R) -> Self {
         Self {
             rng,
@@ -110,7 +110,7 @@ impl<R: CryptoRngCore + Copy> Fernet<R> {
     pub fn new_rand(mut rng: R) -> Self {
         let mut sign_key = [0u8; AES_KEY_SIZE];
         rng.fill_bytes(&mut sign_key);
-        let enc_key = AesCbcEnc::generate_key(&mut rng);
+        let enc_key = cipher::Key::<AesCbcEnc>::generate_from_rng(&mut rng);
 
         Self {
             rng,
@@ -131,19 +131,19 @@ impl<R: CryptoRngCore + Copy> Fernet<R> {
         let mut out_len = 0;
 
         // Generate random IV
-        let iv = AesCbcEnc::generate_iv(self.rng);
+        let iv = cipher::Iv::<AesCbcEnc>::generate_from_rng(&mut { self.rng });
         out_buf[..iv.len()].copy_from_slice(iv.as_slice());
 
         out_len += iv.len();
 
         let chiper_len = AesCbcEnc::new(&self.enc_key, &iv)
-            .encrypt_padded_b2b_mut::<Pkcs7>(text.0, &mut out_buf[out_len..])
+            .encrypt_padded_b2b::<Pkcs7>(text.0, &mut out_buf[out_len..])
             .unwrap()
             .len();
 
         out_len += chiper_len;
 
-        let mut hmac = <HmacSha256 as Mac>::new_from_slice(&self.sign_key)
+        let mut hmac = <HmacSha256 as KeyInit>::new_from_slice(&self.sign_key)
             .map_err(|_| RnsError::InvalidArgument)?;
 
         hmac.update(&out_buf[..out_len]);
@@ -165,7 +165,7 @@ impl<R: CryptoRngCore + Copy> Fernet<R> {
 
         let expected_tag = &token_data[token_data.len() - HMAC_OUT_SIZE..];
 
-        let mut hmac = <HmacSha256 as Mac>::new_from_slice(&self.sign_key)
+        let mut hmac = <HmacSha256 as KeyInit>::new_from_slice(&self.sign_key)
             .map_err(|_| RnsError::InvalidArgument)?;
 
         hmac.update(&token_data[..token_data.len() - HMAC_OUT_SIZE]);
@@ -205,7 +205,7 @@ impl<R: CryptoRngCore + Copy> Fernet<R> {
         let ciphertext = &token_data[IV_KEY_SIZE..tag_start_index];
 
         let msg = AesCbcDec::new(&self.enc_key, &iv.into())
-            .decrypt_padded_b2b_mut::<Pkcs7>(ciphertext, out_buf)
+            .decrypt_padded_b2b::<Pkcs7>(ciphertext, out_buf)
             .map_err(|_| RnsError::CryptoError)?;
 
         Ok(PlainText(msg))
@@ -216,13 +216,14 @@ impl<R: CryptoRngCore + Copy> Fernet<R> {
 mod tests {
     use crate::crypt::fernet::Fernet;
     use core::str;
-    use rand_core::OsRng;
+    use getrandom::SysRng;
+    use rand_core::UnwrapErr;
 
     #[test]
     fn encrypt_then_decrypt() {
         const BUF_SIZE: usize = 4096;
 
-        let fernet = Fernet::new_rand(OsRng);
+        let fernet = Fernet::new_rand(UnwrapErr(SysRng));
 
         let out_msg: &str = "#FERNET_TEST_MESSAGE#";
 
@@ -243,7 +244,7 @@ mod tests {
 
     #[test]
     fn small_buffer() {
-        let fernet = Fernet::new_rand(OsRng);
+        let fernet = Fernet::new_rand(UnwrapErr(SysRng));
 
         let test_msg: &str = "#FERNET_TEST_MESSAGE#";
 

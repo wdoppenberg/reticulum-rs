@@ -27,4 +27,4 @@ default = ["tokio"]
 tokio = ["dep:reticulum-tokio"]
 
 [dev-dependencies]
-tokio = { version = "1.44.2", features = ["test-util"] }
+tokio = { version = "1.52.1", features = ["test-util"] }

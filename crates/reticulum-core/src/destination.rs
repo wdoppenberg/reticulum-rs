@@ -1,7 +1,7 @@
 // Link management moved to reticulum-tokio
 
 use ed25519_dalek::{Signature, SigningKey, VerifyingKey, SIGNATURE_LENGTH};
-use rand_core::CryptoRngCore;
+use rand_core::CryptoRng;
 use x25519_dalek::PublicKey;
 
 use core::{fmt, marker::PhantomData};
@@ -201,7 +201,7 @@ impl<I: HashIdentity, D: Direction, T: Type> Destination<I, D, T> {
 }
 
 // impl<I: DecryptIdentity + HashIdentity, T: Type> Destination<I, Input, T> {
-//     pub fn decrypt<'b, R: CryptoRngCore + Copy>(
+//     pub fn decrypt<'b, R: CryptoRng + Copy>(
 //         &self,
 //         rng: R,
 //         data: &[u8],
@@ -212,7 +212,7 @@ impl<I: HashIdentity, D: Direction, T: Type> Destination<I, D, T> {
 // }
 
 // impl<I: EncryptIdentity + HashIdentity, D: Direction, T: Type> Destination<I, D, T> {
-//     pub fn encrypt<'b, R: CryptoRngCore + Copy>(
+//     pub fn encrypt<'b, R: CryptoRng + Copy>(
 //         &self,
 //         rng: R,
 //         text: &[u8],
@@ -249,7 +249,8 @@ impl Destination<PrivateIdentity, Input, Single> {
         }
     }
 
-    pub fn announce<R: CryptoRngCore + Copy>(
+    // TODO: Replace CryptoRng with TryCryptoRng
+    pub fn announce<R: CryptoRng + Copy>(
         &self,
         rng: R,
         app_data: Option<&[u8]>,
@@ -305,7 +306,7 @@ impl Destination<PrivateIdentity, Input, Single> {
         })
     }
 
-    pub fn path_response<R: CryptoRngCore + Copy>(
+    pub fn path_response<R: CryptoRng + Copy>(
         &self,
         rng: R,
         app_data: Option<&[u8]>,
@@ -386,7 +387,9 @@ mod tests {
     extern crate std;
     use std::println;
 
-    use rand_core::OsRng;
+    use getrandom::SysRng;
+    // TODO: Do not use UnwrapE
+    use rand_core::UnwrapErr;
 
     use crate::buffer::OutputBuffer;
     use crate::hash::Hash;
@@ -399,13 +402,13 @@ mod tests {
 
     #[test]
     fn create_announce() {
-        let identity = PrivateIdentity::new_from_rand(OsRng);
+        let identity = PrivateIdentity::new_from_rand(UnwrapErr(SysRng));
 
         let single_in_destination =
             SingleInputDestination::new(identity, DestinationName::new("test", "in"));
 
         let announce_packet = single_in_destination
-            .announce(OsRng, None)
+            .announce(UnwrapErr(SysRng), None)
             .expect("valid announce packet");
 
         println!("Announce packet {}", announce_packet);
@@ -449,7 +452,7 @@ mod tests {
         println!("destination hash {}", destination.desc.address_hash);
 
         let announce = destination
-            .announce(OsRng, None)
+            .announce(UnwrapErr(SysRng), None)
             .expect("valid announce packet");
 
         let mut output_data = [0u8; 4096];
@@ -462,7 +465,7 @@ mod tests {
 
     #[test]
     fn check_announce() {
-        let priv_identity = PrivateIdentity::new_from_rand(OsRng);
+        let priv_identity = PrivateIdentity::new_from_rand(UnwrapErr(SysRng));
 
         let destination = SingleInputDestination::new(
             priv_identity,
@@ -470,7 +473,7 @@ mod tests {
         );
 
         let announce = destination
-            .announce(OsRng, None)
+            .announce(UnwrapErr(SysRng), None)
             .expect("valid announce packet");
 
         let _ = DestinationAnnounce::validate(&announce).expect("valid announce");

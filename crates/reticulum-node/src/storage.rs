@@ -257,7 +257,7 @@ mod tests {
     #[test]
     fn store_and_load_roundtrip() {
         let mut flash = MockFlash::new();
-        let original = PrivateIdentity::new_from_rand(rand_core::OsRng);
+        let original = PrivateIdentity::new_from_rand(rand_core::UnwrapErr(getrandom::SysRng));
 
         store_identity(&mut flash, 0, &original).unwrap();
 
@@ -278,7 +278,7 @@ mod tests {
     #[test]
     fn load_or_generate_creates_and_persists() {
         let mut flash = MockFlash::new();
-        let mut rng = rand_core::OsRng;
+        let mut rng = rand_core::UnwrapErr(getrandom::SysRng);
 
         let id1 = load_or_generate(&mut flash, 0, &mut rng).unwrap();
         let id2 = load_or_generate(&mut flash, 0, &mut rng).unwrap();
@@ -290,7 +290,7 @@ mod tests {
     #[test]
     fn corrupt_magic_returns_none() {
         let mut flash = MockFlash::new();
-        let id = PrivateIdentity::new_from_rand(rand_core::OsRng);
+        let id = PrivateIdentity::new_from_rand(rand_core::UnwrapErr(getrandom::SysRng));
         store_identity(&mut flash, 0, &id).unwrap();
 
         flash.0[0] = 0xDE; // corrupt magic

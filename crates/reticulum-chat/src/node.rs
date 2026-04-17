@@ -630,7 +630,7 @@ async fn channel_rx_task(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand_core::OsRng;
+    use getrandom::SysRng;\n    use rand_core::UnwrapErr;
     use reticulum_core::hash::AddressHash;
     use reticulum_core::identity::PrivateIdentity;
     use reticulum_tokio::channel::InboundMessage;

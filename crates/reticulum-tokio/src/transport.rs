@@ -6,7 +6,8 @@ use path_requests::create_path_request_destination;
 use path_requests::PathRequests;
 use path_requests::TagBytes;
 use path_table::PathTable;
-use rand_core::OsRng;
+use getrandom::SysRng;
+use rand_core::UnwrapErr;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -158,7 +159,7 @@ impl Default for TransportConfig {
     fn default() -> Self {
         Self {
             name: "tp".into(),
-            node_address: AddressHash::new_from_rand(OsRng),
+            node_address: AddressHash::new_from_rand(UnwrapErr(SysRng)),
             broadcast: false,
             retransmit: false,
         }
@@ -298,7 +299,7 @@ impl Transport {
                 destination
                     .lock()
                     .await
-                    .announce(OsRng, app_data)
+                    .announce(UnwrapErr(SysRng), app_data)
                     .expect("valid announce packet"),
             )
             .await;
@@ -841,7 +842,7 @@ async fn handle_path_request<'a>(
             let response = dest
                 .lock()
                 .await
-                .path_response(OsRng, None)
+                .path_response(UnwrapErr(SysRng), None)
                 .expect("valid path response");
 
             handler

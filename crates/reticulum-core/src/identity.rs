@@ -1,7 +1,7 @@
 #[cfg(feature = "alloc")]
 use alloc::fmt::Write;
 use hkdf::Hkdf;
-use rand_core::CryptoRngCore;
+use rand_core::CryptoRng;
 
 use ed25519_dalek::{ed25519::signature::Signer, Signature, SigningKey, VerifyingKey};
 use sha2::{Digest, Sha256};
@@ -23,7 +23,7 @@ pub const DERIVED_KEY_LENGTH: usize = 256 / 8;
 pub const DERIVED_KEY_LENGTH: usize = 512 / 8;
 
 pub trait EncryptIdentity {
-    fn encrypt<'a, R: CryptoRngCore + Copy>(
+    fn encrypt<'a, R: CryptoRng + Copy>(
         &self,
         rng: R,
         text: &[u8],
@@ -33,7 +33,7 @@ pub trait EncryptIdentity {
 }
 
 pub trait DecryptIdentity {
-    fn decrypt<'a, R: CryptoRngCore + Copy>(
+    fn decrypt<'a, R: CryptoRng + Copy>(
         &self,
         rng: R,
         data: &[u8],
@@ -148,7 +148,7 @@ impl Identity {
             .map_err(|_| RnsError::IncorrectSignature)
     }
 
-    pub fn derive_key<R: CryptoRngCore + Copy>(&self, rng: R, salt: Option<&[u8]>) -> DerivedKey {
+    pub fn derive_key<R: CryptoRng + Copy>(&self, rng: R, salt: Option<&[u8]>) -> DerivedKey {
         DerivedKey::new_from_ephemeral_key(rng, &self.public_key, salt)
     }
 }
@@ -167,7 +167,7 @@ impl HashIdentity for Identity {
 }
 
 impl EncryptIdentity for Identity {
-    fn encrypt<'a, R: CryptoRngCore + Copy>(
+    fn encrypt<'a, R: CryptoRng + Copy>(
         &self,
         rng: R,
         text: &[u8],
@@ -175,7 +175,8 @@ impl EncryptIdentity for Identity {
         out_buf: &'a mut [u8],
     ) -> Result<&'a [u8], RnsError> {
         let mut out_offset = 0;
-        let ephemeral_key = EphemeralSecret::random_from_rng(rng);
+        let mut rng = rng;
+        let ephemeral_key = EphemeralSecret::random_from_rng(&mut rng);
         {
             let ephemeral_public = PublicKey::from(&ephemeral_key);
             let ephemeral_public_bytes = ephemeral_public.as_bytes();
@@ -210,7 +211,7 @@ impl HashIdentity for EmptyIdentity {
 }
 
 impl EncryptIdentity for EmptyIdentity {
-    fn encrypt<'a, R: CryptoRngCore + Copy>(
+    fn encrypt<'a, R: CryptoRng + Copy>(
         &self,
         _rng: R,
         text: &[u8],
@@ -228,7 +229,7 @@ impl EncryptIdentity for EmptyIdentity {
 }
 
 impl DecryptIdentity for EmptyIdentity {
-    fn decrypt<'a, R: CryptoRngCore + Copy>(
+    fn decrypt<'a, R: CryptoRng + Copy>(
         &self,
         _rng: R,
         data: &[u8],
@@ -270,9 +271,11 @@ impl PrivateIdentity {
         }
     }
 
-    pub fn new_from_rand<R: CryptoRngCore>(mut rng: R) -> Self {
+    pub fn new_from_rand<R: CryptoRng>(mut rng: R) -> Self {
         let sign_key = SigningKey::from_bytes(&Hash::new_from_rand(&mut rng).to_bytes());
-        let private_key = StaticSecret::random_from_rng(rng);
+        let mut private_key_bytes = [0u8; 32];
+        rng.fill_bytes(&mut private_key_bytes);
+        let private_key = StaticSecret::from(private_key_bytes);
 
         Self::new(private_key, sign_key)
     }
@@ -366,7 +369,7 @@ impl HashIdentity for PrivateIdentity {
 }
 
 impl EncryptIdentity for PrivateIdentity {
-    fn encrypt<'a, R: CryptoRngCore + Copy>(
+    fn encrypt<'a, R: CryptoRng + Copy>(
         &self,
         rng: R,
         text: &[u8],
@@ -389,7 +392,7 @@ impl EncryptIdentity for PrivateIdentity {
 }
 
 impl DecryptIdentity for PrivateIdentity {
-    fn decrypt<'a, R: CryptoRngCore + Copy>(
+    fn decrypt<'a, R: CryptoRng + Copy>(
         &self,
         rng: R,
         data: &[u8],
@@ -445,12 +448,13 @@ impl DerivedKey {
         Self::new(&priv_key.diffie_hellman(pub_key), salt)
     }
 
-    pub fn new_from_ephemeral_key<R: CryptoRngCore + Copy>(
+    pub fn new_from_ephemeral_key<R: CryptoRng + Copy>(
         rng: R,
         pub_key: &PublicKey,
         salt: Option<&[u8]>,
     ) -> Self {
-        let secret = EphemeralSecret::random_from_rng(rng);
+        let mut rng = rng;
+        let secret = EphemeralSecret::random_from_rng(&mut rng);
         let shared_key = secret.diffie_hellman(pub_key);
         Self::new(&shared_key, salt)
     }
@@ -466,13 +470,14 @@ impl DerivedKey {
 
 #[cfg(test)]
 mod tests {
-    use rand_core::OsRng;
+    use getrandom::SysRng;
+    use rand_core::UnwrapErr;
 
     use super::PrivateIdentity;
 
     #[test]
     fn private_identity_hex_string() {
-        let original_id = PrivateIdentity::new_from_rand(OsRng);
+        let original_id = PrivateIdentity::new_from_rand(UnwrapErr(SysRng));
         let original_hex = original_id.to_hex_string();
 
         let actual_id =

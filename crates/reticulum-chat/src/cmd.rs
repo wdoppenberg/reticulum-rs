@@ -100,7 +100,11 @@ impl ChatCmd for TextMessage {
         let ts_bytes: [u8; 8] = data[ADDRESS_HASH_SIZE..MIN_PAYLOAD].try_into().ok()?;
         let timestamp = u64::from_le_bytes(ts_bytes);
         let content = String::from_utf8(data[MIN_PAYLOAD..].to_vec()).ok()?;
-        Some(Self { sender, timestamp, content })
+        Some(Self {
+            sender,
+            timestamp,
+            content,
+        })
     }
 }
 
@@ -109,12 +113,14 @@ impl ChatCmd for TextMessage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand_core::OsRng;
+    use getrandom::SysRng;
+
+    use rand_core::UnwrapErr;
     use reticulum_core::hash::AddressHash;
 
     #[test]
     fn text_message_round_trips() {
-        let sender = AddressHash::new_from_rand(OsRng);
+        let sender = AddressHash::new_from_rand(UnwrapErr(SysRng));
         let msg = TextMessage::new(sender, "hello, world");
         let encoded = msg.encode();
         let decoded = TextMessage::decode(&encoded).expect("decode");
@@ -135,7 +141,7 @@ mod tests {
 
     #[test]
     fn decode_invalid_utf8_returns_none() {
-        let sender = AddressHash::new_from_rand(OsRng);
+        let sender = AddressHash::new_from_rand(UnwrapErr(SysRng));
         let mut buf = Vec::new();
         buf.extend_from_slice(sender.as_slice()); // 16 bytes
         buf.extend_from_slice(&42u64.to_le_bytes()); // 8 bytes
@@ -150,7 +156,7 @@ mod tests {
 
     #[test]
     fn empty_content_round_trips() {
-        let sender = AddressHash::new_from_rand(OsRng);
+        let sender = AddressHash::new_from_rand(UnwrapErr(SysRng));
         let msg = TextMessage::new(sender, "");
         let decoded = TextMessage::decode(&msg.encode()).expect("decode");
         assert_eq!(decoded.content, "");

@@ -2,7 +2,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use ed25519_dalek::SigningKey;
-use rand_core::OsRng;
+use getrandom::SysRng;
+use rand_core::UnwrapErr;
 use x25519_dalek::StaticSecret;
 
 use reticulum_core::{
@@ -163,7 +164,7 @@ impl Link {
             id: AddressHash::new_empty(),
             destination,
             state: LinkState::Pending {
-                priv_identity: PrivateIdentity::new_from_rand(OsRng),
+                priv_identity: PrivateIdentity::new_from_rand(UnwrapErr(SysRng)),
             },
             request_time: Instant::now(),
             rtt: Duration::from_secs(0),
@@ -193,7 +194,7 @@ impl Link {
         log::debug!("link: create from request {}", link_id);
 
         let priv_identity =
-            PrivateIdentity::new(StaticSecret::random_from_rng(OsRng), signing_key);
+            PrivateIdentity::new(StaticSecret::random_from_rng(&mut UnwrapErr(SysRng)), signing_key);
         let derived_key =
             priv_identity.derive_key(&peer_identity.public_key, Some(link_id.as_slice()));
 
@@ -405,7 +406,7 @@ impl Link {
         let mut packet_data = PacketDataBuffer::new();
         let cipher_text_len = {
             let cipher_text = priv_identity.encrypt(
-                OsRng,
+                UnwrapErr(SysRng),
                 data,
                 derived_key,
                 packet_data.acquire_buf_max(),
@@ -436,7 +437,7 @@ impl Link {
         let mut packet_data = PacketDataBuffer::new();
         let cipher_text_len = {
             let cipher_text = priv_identity.encrypt(
-                OsRng,
+                UnwrapErr(SysRng),
                 data,
                 derived_key,
                 packet_data.acquire_buf_max(),
@@ -467,7 +468,7 @@ impl Link {
         let mut packet_data = PacketDataBuffer::new();
         let cipher_text_len = {
             let cipher_text = priv_identity.encrypt(
-                OsRng,
+                UnwrapErr(SysRng),
                 data,
                 derived_key,
                 packet_data.acquire_buf_max(),
@@ -514,14 +515,14 @@ impl Link {
         let LinkState::Active { priv_identity, derived_key, .. } = &self.state else {
             return Err(RnsError::InvalidArgument);
         };
-        priv_identity.encrypt(OsRng, text, derived_key, out_buf)
+        priv_identity.encrypt(UnwrapErr(SysRng), text, derived_key, out_buf)
     }
 
     pub fn decrypt<'a>(&self, text: &[u8], out_buf: &'a mut [u8]) -> Result<&'a [u8], RnsError> {
         let LinkState::Active { priv_identity, derived_key, .. } = &self.state else {
             return Err(RnsError::InvalidArgument);
         };
-        priv_identity.decrypt(OsRng, text, derived_key, out_buf)
+        priv_identity.decrypt(UnwrapErr(SysRng), text, derived_key, out_buf)
     }
 
     pub fn destination(&self) -> &DestinationDesc {
@@ -540,7 +541,7 @@ impl Link {
         let mut packet_data = PacketDataBuffer::new();
         let token_len = {
             let token = priv_identity.encrypt(
-                OsRng,
+                UnwrapErr(SysRng),
                 buf.as_slice(),
                 derived_key,
                 packet_data.acquire_buf_max(),
@@ -604,7 +605,7 @@ impl Link {
             LinkState::Active { priv_identity, .. } | LinkState::Pending { priv_identity } => {
                 priv_identity
             }
-            LinkState::Closed => PrivateIdentity::new_from_rand(OsRng),
+            LinkState::Closed => PrivateIdentity::new_from_rand(UnwrapErr(SysRng)),
         };
         self.state = LinkState::Pending { priv_identity };
     }
@@ -640,7 +641,7 @@ mod tests {
     fn make_link() -> Link {
         let (event_tx, _) = broadcast::channel(4);
         let (data_tx, _) = broadcast::channel(4);
-        let identity = PrivateIdentity::new_from_rand(OsRng);
+        let identity = PrivateIdentity::new_from_rand(UnwrapErr(SysRng));
         let dest = SingleInputDestination::new(
             identity,
             DestinationName::new("test", "link"),
@@ -695,8 +696,8 @@ mod tests {
         let (data_tx, _) = broadcast::channel(4);
 
         // Build a fake link-request packet (two x25519 public keys).
-        let requester_id = PrivateIdentity::new_from_rand(OsRng);
-        let responder_id = PrivateIdentity::new_from_rand(OsRng);
+        let requester_id = PrivateIdentity::new_from_rand(UnwrapErr(SysRng));
+        let responder_id = PrivateIdentity::new_from_rand(UnwrapErr(SysRng));
         let responder_dest = SingleInputDestination::new(
             responder_id,
             DestinationName::new("test", "link"),

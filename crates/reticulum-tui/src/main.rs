@@ -527,7 +527,7 @@ fn load_or_create_chat_identity(paths: &ReticulumPaths) -> anyhow::Result<Privat
         PrivateIdentity::new_from_hex_string(&hex)
             .map_err(|e| anyhow::anyhow!("failed to decode chat identity: {:?}", e))
     } else {
-        let identity = PrivateIdentity::new_from_rand(rand_core::OsRng);
+        let identity = PrivateIdentity::new_from_rand(rand_core::UnwrapErr(getrandom::SysRng));
         let hex = identity.to_hex_string();
         let raw: Vec<u8> = (0..hex.len() / 2)
             .map(|i| u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).unwrap())

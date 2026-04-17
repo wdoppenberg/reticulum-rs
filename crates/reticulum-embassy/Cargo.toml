@@ -2,7 +2,7 @@
 name = "reticulum-embassy"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.75"
+rust-version = "1.85"
 license = "MIT"
 repository = "https://github.com/wdoppenberg/reticulum-rs"
 categories = ["network-programming", "no-std", "embedded"]
@@ -19,17 +19,17 @@ bare-metal / RTOS targets running the Embassy executor.
 reticulum-core = { path = "../reticulum-core", version = "0.1.0", default-features = false, features = ["heapless", "embassy-futures"] }
 
 # Embassy sync primitives and select — no target-specific code
-embassy-sync    = { version = "0.6",  default-features = false }
+embassy-sync    = { version = "0.8",  default-features = false }
 embassy-futures = { version = "0.1",  default-features = false }
 
 # Optional: EmbassyClock / EmbassyDelay via embassy-time.
 # Enable this feature when an embassy-time time-driver is available
 # (provided by e.g. embassy-nrf, embassy-stm32, or embassy-time-driver).
 # Targets without a time driver can still use all interface infrastructure.
-embassy-time = { version = "0.3", default-features = false, optional = true }
+embassy-time = { version = "0.5", default-features = false, optional = true }
 
 # Stack-allocated collections
-heapless = { version = "0.8", default-features = false }
+heapless = { version = "0.9", default-features = false }
 
 # Async I/O traits for embedded drivers (UART, SPI, …)
 embedded-io-async = { version = "0.6.1", default-features = false }
@@ -38,7 +38,7 @@ embedded-io-async = { version = "0.6.1", default-features = false }
 log = { version = "0.4", default-features = false }
 
 # Optional: defmt logging for embedded targets
-defmt = { version = "0.3", optional = true }
+defmt = { version = "1.0", optional = true }
 
 [features]
 default = ["embassy-time"]
@@ -49,7 +49,7 @@ embassy-time = ["dep:embassy-time"]
 defmt = ["dep:defmt"]
 
 [dev-dependencies]
-pollster = "0.3"
+pollster = "0.4"
 # critical-section std provider required when embassy_sync channels are used in
 # host-side tests (on-target, the HAL provides this automatically).
 critical-section = { version = "1", features = ["std"] }

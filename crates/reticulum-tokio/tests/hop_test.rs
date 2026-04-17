@@ -1,7 +1,8 @@
 use std::sync::Once;
 use std::time::Duration;
 
-use rand_core::OsRng;
+use getrandom::SysRng;
+use rand_core::UnwrapErr;
 use reticulum_core::destination::DestinationName;
 use reticulum_core::identity::PrivateIdentity;
 use reticulum_tokio::tcp_client::TcpClient;
@@ -26,7 +27,7 @@ async fn build_transport_full(
 ) -> Transport {
     let mut config = TransportConfig::new(
         name,
-        *PrivateIdentity::new_from_rand(OsRng).address_hash(),
+        *PrivateIdentity::new_from_rand(UnwrapErr(SysRng)).address_hash(),
         true,
     );
 

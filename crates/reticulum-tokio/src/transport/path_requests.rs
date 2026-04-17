@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-use rand_core::OsRng;
+use getrandom::SysRng;
+use rand_core::UnwrapErr;
 
 use tokio::time::Instant;
 
@@ -29,7 +30,7 @@ pub fn create_path_request_destination() -> PlainInputDestination {
 pub type TagBytes = Vec<u8>;
 
 pub fn create_random_tag() -> TagBytes {
-    AddressHash::new_from_rand(OsRng).as_slice().into()
+    AddressHash::new_from_rand(UnwrapErr(SysRng)).as_slice().into()
 }
 
 pub struct PathRequest {
@@ -233,7 +234,7 @@ mod tests {
     fn path_request_roundtrip() {
         let mut testee = PathRequests::new("", None);
 
-        let dest = AddressHash::new_from_rand(OsRng);
+        let dest = AddressHash::new_from_rand(UnwrapErr(SysRng));
 
         let encoded = testee.generate(&dest, None);
         let decoded = testee.decode(encoded.data.as_slice()).unwrap();

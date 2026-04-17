@@ -1,4 +1,5 @@
-use rand_core::OsRng;
+use getrandom::SysRng;
+use rand_core::UnwrapErr;
 use reticulum_core::identity::PrivateIdentity;
 use reticulum_core::packet::Packet;
 use reticulum_tokio::tcp_client::TcpClient;
@@ -9,7 +10,7 @@ use tokio_util::sync::CancellationToken;
 async fn build_transport(name: &str, server_addr: &str, client_addr: &[&str]) -> Transport {
     let transport = Transport::new(TransportConfig::new(
         name,
-        *PrivateIdentity::new_from_rand(OsRng).address_hash(),
+        *PrivateIdentity::new_from_rand(UnwrapErr(SysRng)).address_hash(),
         true,
     ));
 

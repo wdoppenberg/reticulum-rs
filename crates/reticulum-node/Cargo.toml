@@ -2,7 +2,7 @@
 name = "reticulum-node"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.75"
+rust-version = "1.85"
 license = "MIT"
 repository = "https://github.com/wdoppenberg/reticulum-rs"
 categories = ["network-programming", "no-std", "embedded"]
@@ -23,18 +23,19 @@ log = { version = "0.4", default-features = false }
 reticulum-embassy = { path = "../reticulum-embassy", version = "0.1.0", default-features = false, optional = true }
 
 # ── Stack-allocated collections ────────────────────────────────────────────────
-heapless = { version = "0.8", default-features = false }
+heapless = { version = "0.9", default-features = false }
 
 # ── Embedded flash storage ─────────────────────────────────────────────────────
 embedded-storage = { version = "0.3", default-features = false, optional = true }
 
 # ── RNG (required by storage::load_or_generate and identity generation) ────────
-rand_core = { version = "0.6", default-features = false, optional = true }
-defmt = { version = "0.3", default-features = false, optional = true }
+rand_core = { version = "0.10", default-features = false, optional = true }
+getrandom = { version = "0.4", default-features = false, optional = true, features = ["sys_rng"] }
+defmt = { version = "1.0", default-features = false, optional = true }
 
 # ── Embassy core — only needed when building the async node runner ─────────────
-embassy-sync    = { version = "0.6",  default-features = false, optional = true }
-embassy-time    = { version = "0.3",  default-features = false, optional = true }
+embassy-sync    = { version = "0.8",  default-features = false, optional = true }
+embassy-time    = { version = "0.5",  default-features = false, optional = true }
 embassy-futures = { version = "0.1",  default-features = false, optional = true }
 
 # ── LoRa radio driver (SX126x) ─────────────────────────────────────────────────
@@ -76,5 +77,5 @@ defmt = ["dep:defmt"]
 ui = ["dep:ratatui", "dep:mousefood"]
 
 [dev-dependencies]
-rand_core = { version = "0.6", features = ["getrandom"] }
+getrandom = { version = "0.4", features = ["sys_rng"] }
 embedded-storage = { version = "0.3" }
