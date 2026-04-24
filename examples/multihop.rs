@@ -38,7 +38,7 @@ async fn main() {
 
     log::info!(">>> MULTIHOP EXAMPLE (place in chain: {}/{}) <<<", our_hop, last_hop);
 
-    let identity = PrivateIdentity::new_from_rand(OsRng);
+    let identity = PrivateIdentity::try_new_from_rand(OsRng).expect("os rng");
     let transport_id = identity.address_hash().clone();
 
     let last_hop_id = PrivateIdentity::new_from_name("last_hop");
@@ -76,7 +76,7 @@ async fn main() {
                 last_hop_name
             ).await;
         } else {
-            let id = PrivateIdentity::new_from_rand(OsRng);
+            let id = PrivateIdentity::try_new_from_rand(OsRng).expect("os rng");
             let name = DestinationName::new(&format!("hop-{}", our_hop), "app");
             destination = transport.add_destination(id, name).await;
         }
@@ -86,8 +86,8 @@ async fn main() {
         let mut announce = destination
             .lock()
             .await
-            .announce(OsRng, None)
-            .unwrap();
+            .try_announce(OsRng, None)
+            .expect("announce");
 
         announce.transport = Some(transport_id);
         announce.header.header_type = HeaderType::Type2;

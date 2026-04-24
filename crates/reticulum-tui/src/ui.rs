@@ -140,7 +140,9 @@ fn format_message(msg: &MessageEntry) -> Line<'static> {
     let (arrow, name_style, msg_style) = if msg.outgoing {
         (
             "→",
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
             Style::default().fg(Color::White),
         )
     } else {
@@ -154,7 +156,11 @@ fn format_message(msg: &MessageEntry) -> Line<'static> {
     };
 
     let sender_hex = msg.sender.to_hex_string();
-    let sender_label = format!("{}…{}", &sender_hex[..6], &sender_hex[sender_hex.len() - 4..]);
+    let sender_label = format!(
+        "{}…{}",
+        &sender_hex[..6],
+        &sender_hex[sender_hex.len() - 4..]
+    );
 
     Line::from(vec![
         Span::styled(format!("[{}] ", time), Style::default().fg(Color::DarkGray)),
@@ -183,7 +189,11 @@ fn draw_input(f: &mut Frame, app: &App, area: Rect) {
 
     let para = Paragraph::new(input_text).block(
         Block::default()
-            .title(if focus { " Message (Enter to send) " } else { " Message (Tab to focus) " })
+            .title(if focus {
+                " Message (Enter to send) "
+            } else {
+                " Message (Tab to focus) "
+            })
             .borders(Borders::ALL)
             .border_style(border_style),
     );
@@ -204,7 +214,10 @@ fn draw_status(f: &mut Frame, app: &App, area: Rect) {
         Style::default().fg(Color::White),
     );
     let right = Span::styled(
-        format!(" [me: {}]  [Tab] focus  [c] connect  [s] settings  [q] quit ", own_short),
+        format!(
+            " [me: {}]  [Tab] focus  [c] connect  [s] settings  [q] quit ",
+            own_short
+        ),
         Style::default().fg(Color::DarkGray),
     );
 
@@ -227,7 +240,12 @@ fn draw_settings(f: &mut Frame, app: &App, area: Rect) {
 
     let bool_span = |val: bool| -> Span<'static> {
         if val {
-            Span::styled("enabled ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
+            Span::styled(
+                "enabled ",
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            )
         } else {
             Span::styled("disabled", Style::default().fg(Color::Red))
         }
@@ -238,21 +256,31 @@ fn draw_settings(f: &mut Frame, app: &App, area: Rect) {
     // Helper: row background for the cursor position.
     let row_style = |idx: usize| -> Style {
         if idx == cursor {
-            Style::default().bg(Color::DarkGray).add_modifier(Modifier::BOLD)
+            Style::default()
+                .bg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default()
         }
     };
 
     let cursor_marker = |idx: usize| -> &'static str {
-        if idx == cursor { "▶ " } else { "  " }
+        if idx == cursor {
+            "▶ "
+        } else {
+            "  "
+        }
     };
 
     let mut lines: Vec<Line> = Vec::new();
 
     // ── Header ────────────────────────────────────────────────────────────────
 
-    let tmp_note = if app.is_tmp { "  [TMP — ephemeral instance]" } else { "" };
+    let tmp_note = if app.is_tmp {
+        "  [TMP — ephemeral instance]"
+    } else {
+        ""
+    };
     lines.push(Line::from(vec![
         Span::styled("Config  ", Style::default().fg(Color::DarkGray)),
         Span::styled(
@@ -266,21 +294,73 @@ fn draw_settings(f: &mut Frame, app: &App, area: Rect) {
 
     lines.push(Line::from(Span::styled(
         "[reticulum]",
-        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD),
     )));
 
     // Each bool entry: (cursor_idx, field_name, value, description)
     let bool_rows: &[(usize, &str, bool, &str)] = &[
-        (0,  "enable_transport              ", app.config.reticulum.enable_transport,              "must be true for chat"),
-        (1,  "share_instance                ", app.config.reticulum.share_instance,                "share this node with other local processes"),
-        (2,  "link_mtu_discovery            ", app.config.reticulum.link_mtu_discovery,            "auto-detect link MTU"),
-        (3,  "use_implicit_proof            ", app.config.reticulum.use_implicit_proof,            "use implicit proofs"),
-        (4,  "allow_probes                  ", app.config.reticulum.allow_probes,                  "respond to network probes"),
-        (5,  "enable_remote_management      ", app.config.reticulum.enable_remote_management,      "allow remote management"),
-        (6,  "enable_discovery              ", app.config.reticulum.enable_discovery,              "enable discovery subsystem"),
-        (7,  "discover_interfaces           ", app.config.reticulum.discover_interfaces,           "auto-discover network interfaces"),
-        (8,  "autoconnect_discovered_ifs    ", app.config.reticulum.autoconnect_discovered_interfaces, "auto-connect to discovered interfaces"),
-        (9,  "panic_on_interface_error      ", app.config.reticulum.panic_on_interface_error,      "crash on interface errors"),
+        (
+            0,
+            "enable_transport              ",
+            app.config.reticulum.enable_transport,
+            "must be true for chat",
+        ),
+        (
+            1,
+            "share_instance                ",
+            app.config.reticulum.share_instance,
+            "share this node with other local processes",
+        ),
+        (
+            2,
+            "link_mtu_discovery            ",
+            app.config.reticulum.link_mtu_discovery,
+            "auto-detect link MTU",
+        ),
+        (
+            3,
+            "use_implicit_proof            ",
+            app.config.reticulum.use_implicit_proof,
+            "use implicit proofs",
+        ),
+        (
+            4,
+            "allow_probes                  ",
+            app.config.reticulum.allow_probes,
+            "respond to network probes",
+        ),
+        (
+            5,
+            "enable_remote_management      ",
+            app.config.reticulum.enable_remote_management,
+            "allow remote management",
+        ),
+        (
+            6,
+            "enable_discovery              ",
+            app.config.reticulum.enable_discovery,
+            "enable discovery subsystem",
+        ),
+        (
+            7,
+            "discover_interfaces           ",
+            app.config.reticulum.discover_interfaces,
+            "auto-discover network interfaces",
+        ),
+        (
+            8,
+            "autoconnect_discovered_ifs    ",
+            app.config.reticulum.autoconnect_discovered_interfaces,
+            "auto-connect to discovered interfaces",
+        ),
+        (
+            9,
+            "panic_on_interface_error      ",
+            app.config.reticulum.panic_on_interface_error,
+            "crash on interface errors",
+        ),
     ];
 
     for &(idx, name, val, desc) in bool_rows {
@@ -288,17 +368,22 @@ fn draw_settings(f: &mut Frame, app: &App, area: Rect) {
             Span::styled(cursor_marker(idx), Style::default().fg(Color::Cyan)),
             Span::styled(format!("  {}", name), row_style(idx).fg(Color::White)),
             bool_span(val),
-            Span::styled(
-                format!("  — {}", desc),
-                row_style(idx).fg(Color::DarkGray),
-            ),
+            Span::styled(format!("  — {}", desc), row_style(idx).fg(Color::DarkGray)),
         ]));
     }
 
     // Port rows: (cursor_idx, field_name, value)
     let port_rows: &[(usize, &str, u16)] = &[
-        (10, "shared_instance_port          ", app.config.reticulum.shared_instance_port),
-        (11, "instance_control_port         ", app.config.reticulum.instance_control_port),
+        (
+            10,
+            "shared_instance_port          ",
+            app.config.reticulum.shared_instance_port,
+        ),
+        (
+            11,
+            "instance_control_port         ",
+            app.config.reticulum.instance_control_port,
+        ),
     ];
 
     for &(idx, name, val) in port_rows {
@@ -319,7 +404,9 @@ fn draw_settings(f: &mut Frame, app: &App, area: Rect) {
 
     lines.push(Line::from(Span::styled(
         "[logging]",
-        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD),
     )));
 
     let ll = app.config.logging.loglevel;
@@ -336,12 +423,18 @@ fn draw_settings(f: &mut Frame, app: &App, area: Rect) {
     };
     lines.push(Line::from(vec![
         Span::styled(cursor_marker(12), Style::default().fg(Color::Cyan)),
-        Span::styled("  loglevel                      ", row_style(12).fg(Color::White)),
+        Span::styled(
+            "  loglevel                      ",
+            row_style(12).fg(Color::White),
+        ),
         Span::styled(
             format!("{} ({})", ll, ll_desc),
             row_style(12).fg(Color::Cyan).add_modifier(Modifier::BOLD),
         ),
-        Span::styled("  — 0=Critical … 7=Extreme  [+/-] to adjust", row_style(12).fg(Color::DarkGray)),
+        Span::styled(
+            "  — 0=Critical … 7=Extreme  [+/-] to adjust",
+            row_style(12).fg(Color::DarkGray),
+        ),
     ]));
 
     lines.push(Line::from(""));
@@ -350,7 +443,9 @@ fn draw_settings(f: &mut Frame, app: &App, area: Rect) {
 
     lines.push(Line::from(Span::styled(
         "[interfaces]",
-        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD),
     )));
 
     if app.config.interfaces.is_empty() {
@@ -361,14 +456,24 @@ fn draw_settings(f: &mut Frame, app: &App, area: Rect) {
     } else {
         for (name, iface) in &app.config.interfaces {
             let (kind, enabled) = match iface {
-                InterfaceConfig::Auto(a)   => ("auto      ", a.enabled),
-                InterfaceConfig::Tcp(t)    => (
-                    if t.mode == "server" { "tcp/server" } else { "tcp/client" },
+                InterfaceConfig::Auto(a) => ("auto      ", a.enabled),
+                InterfaceConfig::Tcp(t) => (
+                    if t.mode == "server" {
+                        "tcp/server"
+                    } else {
+                        "tcp/client"
+                    },
                     t.enabled,
                 ),
-                InterfaceConfig::Udp(u)    => ("udp       ", u.enabled),
-                InterfaceConfig::Serial(s) => { let _ = &s.port; ("serial    ", s.enabled) }
-                InterfaceConfig::I2P(i)    => { let _ = &i.sam_host; ("i2p       ", i.enabled) }
+                InterfaceConfig::Udp(u) => ("udp       ", u.enabled),
+                InterfaceConfig::Serial(s) => {
+                    let _ = &s.port;
+                    ("serial    ", s.enabled)
+                }
+                InterfaceConfig::I2P(i) => {
+                    let _ = &i.sam_host;
+                    ("i2p       ", i.enabled)
+                }
             };
 
             let name_label = if name == "auto" {
@@ -445,7 +550,9 @@ pub fn draw_wizard(
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         " Welcome to reticulum-tui!",
-        Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD),
     )));
     lines.push(Line::from(""));
 
@@ -473,7 +580,9 @@ pub fn draw_wizard(
 
     lines.push(Line::from(Span::styled(
         " Proposed fixes:",
-        Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(Color::Green)
+            .add_modifier(Modifier::BOLD),
     )));
     for fix in fixes {
         lines.push(Line::from(vec![
@@ -492,7 +601,10 @@ pub fn draw_wizard(
         Span::styled("   ", Style::default()),
         Span::styled(
             " [y / Enter]  Yes, fix and continue ",
-            Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Green)
+                .add_modifier(Modifier::BOLD),
         ),
         Span::styled("    ", Style::default()),
         Span::styled(

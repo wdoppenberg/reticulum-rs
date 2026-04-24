@@ -83,7 +83,10 @@ async fn main() {
             // Give the TCP layer a moment to establish the connection.
             tokio::time::sleep(Duration::from_millis(500)).await;
             loop {
-                transport.send_announce(&dest, None).await;
+                transport
+                    .send_announce(&dest, None)
+                    .await
+                    .expect("announce");
                 println!("[{mode}] → sent announce");
                 tokio::time::sleep(Duration::from_secs(3)).await;
             }

@@ -27,6 +27,8 @@ use heapless::LinearMap;
 use reticulum_core::hash::AddressHash;
 use reticulum_core::packet::{DestinationType, Packet, PacketType, PropagationType};
 
+use crate::config::RouterConfig;
+
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 /// Maximum hop count before a packet is dropped.  Matches Reticulum's
@@ -71,18 +73,14 @@ pub struct Router<const N_SEEN: usize, const N_PATHS: usize> {
 }
 
 impl<const N_SEEN: usize, const N_PATHS: usize> Router<N_SEEN, N_PATHS> {
-    /// Create a new router.
-    pub const fn new(
-        node_addr: AddressHash,
-        forward_announces: bool,
-        transport_enabled: bool,
-    ) -> Self {
+    /// Create a new router from a [`RouterConfig`].
+    pub const fn new(node_addr: AddressHash, config: RouterConfig) -> Self {
         Self {
             seen: Deque::new(),
             paths: LinearMap::new(),
             node_addr,
-            forward_announces,
-            transport_enabled,
+            forward_announces: config.forward_announces,
+            transport_enabled: config.transport_enabled,
         }
     }
 
@@ -90,7 +88,9 @@ impl<const N_SEEN: usize, const N_PATHS: usize> Router<N_SEEN, N_PATHS> {
     /// `via_interface`.
     ///
     /// Returns `false` if the path table is full and the entry could not be
-    /// inserted.
+    /// inserted.  Callers must check this value — a silently dropped path means
+    /// the node will broadcast instead of forwarding directly.
+    #[must_use = "returns false when the path table is full; log or handle the overflow"]
     pub fn learn_path(&mut self, destination: AddressHash, via_interface: AddressHash) -> bool {
         if let Some(entry) = self.paths.get_mut(&destination) {
             *entry = via_interface;
@@ -193,7 +193,12 @@ impl<const N_SEEN: usize, const N_PATHS: usize> Router<N_SEEN, N_PATHS> {
                     return RouteDecision::Drop;
                 }
                 // Learn: the source interface can reach the announced destination.
-                self.learn_path(packet.destination, source_iface);
+                if !self.learn_path(packet.destination, source_iface) {
+                    log::warn!(
+                        "router: path table full, cannot learn path to {:?}",
+                        packet.destination
+                    );
+                }
                 RouteDecision::Broadcast
             }
 
@@ -259,6 +264,7 @@ impl<const N_SEEN: usize, const N_PATHS: usize> Router<N_SEEN, N_PATHS> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::RouterConfig;
     use reticulum_core::hash::Hash;
     use reticulum_core::packet::{
         Header, HeaderType, IfacFlag, PacketContext, PacketDataBuffer, PropagationType,
@@ -275,7 +281,7 @@ mod tests {
     }
 
     fn make_router() -> Router<16, 16> {
-        Router::new(node_addr(), true, true)
+        Router::new(node_addr(), RouterConfig::embedded())
     }
 
     fn make_packet(dest: AddressHash, ptype: PacketType, dtype: DestinationType) -> Packet {
@@ -336,7 +342,7 @@ mod tests {
         let iface_a = make_addr(10);
         let iface_b = make_addr(11);
 
-        router.learn_path(dest, iface_b);
+        let _ = router.learn_path(dest, iface_b);
         let pkt = make_packet(dest, PacketType::Data, DestinationType::Single);
         assert_eq!(router.route(&pkt, iface_a), RouteDecision::Direct(iface_b));
     }
@@ -353,7 +359,10 @@ mod tests {
 
     #[test]
     fn announce_dropped_when_disabled() {
-        let mut router = Router::<16, 16>::new(node_addr(), false, true);
+        let mut router = Router::<16, 16>::new(
+            node_addr(),
+            RouterConfig { forward_announces: false, transport_enabled: true },
+        );
         let dest = make_addr(5);
         let iface = make_addr(10);
         let pkt = make_packet(dest, PacketType::Announce, DestinationType::Single);
@@ -428,7 +437,7 @@ mod tests {
         let iface_b = make_addr(11);
 
         // We know the way to the transport node.
-        router.learn_path(transport_node, iface_b);
+        let _ = router.learn_path(transport_node, iface_b);
 
         let pkt = make_packet_with_hops(
             dest,
@@ -468,7 +477,7 @@ mod tests {
         let iface_a = make_addr(10);
         let iface_b = make_addr(11);
 
-        router.learn_path(dest, iface_b);
+        let _ = router.learn_path(dest, iface_b);
 
         let pkt = make_packet_with_hops(
             dest,
@@ -484,7 +493,7 @@ mod tests {
 
     #[test]
     fn dedup_ring_evicts_oldest() {
-        let mut router = Router::<4, 16>::new(node_addr(), true, true);
+        let mut router = Router::<4, 16>::new(node_addr(), RouterConfig::embedded());
         let iface = make_addr(0);
 
         for i in 0..4u8 {

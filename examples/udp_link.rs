@@ -28,7 +28,7 @@ async fn main() {
 
     log::info!(">>> UDP LINK APP <<<");
 
-    let id = PrivateIdentity::new_from_rand(OsRng);
+    let id = PrivateIdentity::try_new_from_rand(OsRng).expect("os rng");
     let destination = SingleInputDestination::new(id.clone(), DestinationName::new("example", "app"));
     let transport = Transport::new(TransportConfig::new("server", &id, true));
 
@@ -75,7 +75,8 @@ async fn main() {
         }
         transport
             .send_announce(&dest, None)
-            .await;
+            .await
+            .expect("announce");
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
 

@@ -172,13 +172,7 @@ impl ChatHandle {
         let msg = TextMessage::new(self.own_address, content);
         let payload = msg.encode();
 
-        let channel = self
-            .state
-            .lock()
-            .await
-            .channels
-            .get(&peer_address)
-            .cloned();
+        let channel = self.state.lock().await.channels.get(&peer_address).cloned();
 
         match channel {
             Some(ch) => ch
@@ -192,13 +186,7 @@ impl ChatHandle {
 
     /// Returns the address hashes of all currently connected peers.
     pub async fn connected_peers(&self) -> Vec<AddressHash> {
-        self.state
-            .lock()
-            .await
-            .channels
-            .keys()
-            .cloned()
-            .collect()
+        self.state.lock().await.channels.keys().cloned().collect()
     }
 
     /// Shut down all background tasks for this node.
@@ -358,9 +346,9 @@ pub async fn start(
         async move {
             let mut early_done = false;
             loop {
-                transport
-                    .send_announce(&dest, app_data.as_deref())
-                    .await;
+                if let Err(err) = transport.send_announce(&dest, app_data.as_deref()).await {
+                    log::warn!("chat: announce failed: {}", err);
+                }
                 let delay = if !early_done {
                     early_done = true;
                     ANNOUNCE_EARLY_RETRY
@@ -530,7 +518,10 @@ async fn emit_peer_discovered(ev: AnnounceEvent, event_tx: &broadcast::Sender<Ch
         }
     };
 
-    let _ = event_tx.send(ChatEvent::PeerDiscovered { desc: Box::new(desc), display_name });
+    let _ = event_tx.send(ChatEvent::PeerDiscovered {
+        desc: Box::new(desc),
+        display_name,
+    });
 }
 
 /// Per-channel receive loop.
@@ -586,7 +577,9 @@ async fn channel_rx_task(
                         // No existing channel for this peer — take ownership.
                         e.insert(ch);
                         resolved_peer = Some(sender);
-                        let _ = event_tx.send(ChatEvent::PeerConnected { peer_address: sender });
+                        let _ = event_tx.send(ChatEvent::PeerConnected {
+                            peer_address: sender,
+                        });
                     }
                     Entry::Occupied(_) => {
                         // The peer already has a channel (they also opened an
@@ -630,12 +623,12 @@ async fn channel_rx_task(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use getrandom::SysRng;\n    use rand_core::UnwrapErr;
+    use crate::cmd::{ChatCmd, TextMessage};
+    use getrandom::SysRng;
+    use reticulum_core::channel::types::MessageType;
     use reticulum_core::hash::AddressHash;
     use reticulum_core::identity::PrivateIdentity;
     use reticulum_tokio::channel::InboundMessage;
-    use reticulum_core::channel::types::MessageType;
-    use crate::cmd::{ChatCmd, TextMessage};
 
     // ── channel_rx_task unit tests ────────────────────────────────────────────
 
@@ -692,14 +685,14 @@ mod tests {
     /// `PeerDisconnected` when the channel closes (EOF).
     #[tokio::test]
     async fn rx_task_emits_message_then_disconnect_for_known_peer() {
-        let sender = AddressHash::new_from_rand(OsRng);
-        let events = run_rx_task(
-            vec![make_text_inbound(sender, "hello")],
-            Some(sender),
-        )
-        .await;
+        let sender = AddressHash::try_new_from_rand(SysRng).expect("system RNG");
+        let events = run_rx_task(vec![make_text_inbound(sender, "hello")], Some(sender)).await;
 
-        assert_eq!(events.len(), 2, "expected MessageReceived + PeerDisconnected");
+        assert_eq!(
+            events.len(),
+            2,
+            "expected MessageReceived + PeerDisconnected"
+        );
         match &events[0] {
             ChatEvent::MessageReceived { message } => {
                 assert_eq!(message.sender, sender);
@@ -719,7 +712,7 @@ mod tests {
     /// emitted when the channel closes.
     #[tokio::test]
     async fn rx_task_ignores_unknown_message_type() {
-        let sender = AddressHash::new_from_rand(OsRng);
+        let sender = AddressHash::try_new_from_rand(SysRng).expect("system RNG");
         let events = run_rx_task(
             vec![make_unknown_inbound(b"garbage".to_vec())],
             Some(sender),
@@ -738,7 +731,7 @@ mod tests {
     /// still emits `PeerDisconnected`.
     #[tokio::test]
     async fn rx_task_emits_peer_disconnected_on_close_for_known_peer() {
-        let sender = AddressHash::new_from_rand(OsRng);
+        let sender = AddressHash::try_new_from_rand(SysRng).expect("system RNG");
         // Zero messages — task gets EOF immediately and emits PeerDisconnected.
         let events = run_rx_task(vec![], Some(sender)).await;
         assert_eq!(events.len(), 1);
@@ -757,7 +750,7 @@ mod tests {
     /// the task now resolves the peer address from the first message.
     #[tokio::test]
     async fn rx_task_delivers_message_for_unknown_peer_without_pending_entry() {
-        let sender = AddressHash::new_from_rand(OsRng);
+        let sender = AddressHash::try_new_from_rand(SysRng).expect("system RNG");
         let events = run_rx_task(
             vec![make_text_inbound(sender, "hi")],
             None, // unknown peer, pending_in is empty
@@ -765,7 +758,12 @@ mod tests {
         .await;
 
         // MessageReceived + PeerDisconnected (peer resolved from first message).
-        assert_eq!(events.len(), 2, "expected MessageReceived + PeerDisconnected, got {:?}", events);
+        assert_eq!(
+            events.len(),
+            2,
+            "expected MessageReceived + PeerDisconnected, got {:?}",
+            events
+        );
         match &events[0] {
             ChatEvent::MessageReceived { message } => {
                 assert_eq!(message.sender, sender);
@@ -794,17 +792,13 @@ mod tests {
     async fn chat_handle_peer_returns_disconnected_handle() {
         // Verify that ChatHandle::peer() builds a PeerHandle without panicking
         // and that the peer address is preserved.
-        let identity = PrivateIdentity::new_from_rand(OsRng);
+        let identity = PrivateIdentity::try_new_from_rand(SysRng).expect("system RNG");
         let own_address = *identity.address_hash();
         let (event_tx, _) = broadcast::channel(8);
 
-        let transport = Arc::new(
-            reticulum_tokio::Transport::new(reticulum_tokio::TransportConfig::new(
-                "test",
-                own_address,
-                false,
-            )),
-        );
+        let transport = Arc::new(reticulum_tokio::Transport::new(
+            reticulum_tokio::TransportConfig::new("test", own_address, false),
+        ));
 
         let handle = ChatHandle {
             own_address,
@@ -814,7 +808,7 @@ mod tests {
             cancel: CancellationToken::new(),
         };
 
-        let peer_identity = PrivateIdentity::new_from_rand(OsRng);
+        let peer_identity = PrivateIdentity::try_new_from_rand(SysRng).expect("system RNG");
         let peer_hash = *peer_identity.address_hash();
         let peer_desc = reticulum_core::destination::DestinationDesc {
             name: reticulum_core::destination::DestinationName::new(APP_NAME, APP_ASPECTS),

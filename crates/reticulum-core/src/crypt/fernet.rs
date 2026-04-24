@@ -9,7 +9,7 @@ use cbc::cipher::KeyIvInit;
 use crypto_common::typenum::Unsigned;
 use crypto_common::{Generate, IvSizeUser, KeySizeUser, OutputSizeUser};
 use hmac::{Hmac, KeyInit, Mac};
-use rand_core::CryptoRng;
+use rand_core::{CryptoRng, TryCryptoRng};
 use sha2::Sha256;
 
 use crate::error::RnsError;
@@ -41,7 +41,7 @@ pub struct Token<'a>(&'a [u8]);
 // eight byte TIMESTAMP field at the start of each token. These fields are
 // not relevant to Reticulum. They are therefore stripped from this
 // implementation, since they incur overhead and leak initiator metadata.
-pub struct Fernet<R: CryptoRng> {
+pub struct Fernet<R: TryCryptoRng> {
     rng: R,
     sign_key: [u8; AES_KEY_SIZE],
     enc_key: AesKey,
@@ -84,7 +84,7 @@ impl<'a> From<&'a [u8]> for Token<'a> {
     }
 }
 
-impl<R: CryptoRng + Copy> Fernet<R> {
+impl<R: TryCryptoRng + Copy> Fernet<R> {
     pub fn new(sign_key: [u8; AES_KEY_SIZE], enc_key: AesKey, rng: R) -> Self {
         Self {
             rng,
@@ -107,7 +107,25 @@ impl<R: CryptoRng + Copy> Fernet<R> {
         }
     }
 
-    pub fn new_rand(mut rng: R) -> Self {
+    pub fn try_new_rand(mut rng: R) -> Result<Self, RnsError> {
+        let mut sign_key = [0u8; AES_KEY_SIZE];
+        rng.try_fill_bytes(&mut sign_key)
+            .map_err(|_| RnsError::Randomness)?;
+        let enc_key = cipher::Key::<AesCbcEnc>::try_generate_from_rng(&mut rng)
+            .map_err(|_| RnsError::Randomness)?;
+
+        Ok(Self {
+            rng,
+            sign_key,
+            enc_key,
+        })
+    }
+
+    pub fn new_rand(rng: R) -> Self
+    where
+        R: CryptoRng,
+    {
+        let mut rng = rng;
         let mut sign_key = [0u8; AES_KEY_SIZE];
         rng.fill_bytes(&mut sign_key);
         let enc_key = cipher::Key::<AesCbcEnc>::generate_from_rng(&mut rng);
@@ -131,7 +149,8 @@ impl<R: CryptoRng + Copy> Fernet<R> {
         let mut out_len = 0;
 
         // Generate random IV
-        let iv = cipher::Iv::<AesCbcEnc>::generate_from_rng(&mut { self.rng });
+        let iv = cipher::Iv::<AesCbcEnc>::try_generate_from_rng(&mut { self.rng })
+            .map_err(|_| RnsError::Randomness)?;
         out_buf[..iv.len()].copy_from_slice(iv.as_slice());
 
         out_len += iv.len();
@@ -200,7 +219,9 @@ impl<R: CryptoRng + Copy> Fernet<R> {
 
         let tag_start_index = token_data.len() - HMAC_OUT_SIZE;
 
-        let iv: [u8; IV_KEY_SIZE] = token_data[..IV_KEY_SIZE].try_into().unwrap();
+        let iv: [u8; IV_KEY_SIZE] = token_data[..IV_KEY_SIZE]
+            .try_into()
+            .map_err(|_| RnsError::InvalidArgument)?;
 
         let ciphertext = &token_data[IV_KEY_SIZE..tag_start_index];
 
@@ -217,13 +238,12 @@ mod tests {
     use crate::crypt::fernet::Fernet;
     use core::str;
     use getrandom::SysRng;
-    use rand_core::UnwrapErr;
 
     #[test]
     fn encrypt_then_decrypt() {
         const BUF_SIZE: usize = 4096;
 
-        let fernet = Fernet::new_rand(UnwrapErr(SysRng));
+        let fernet = Fernet::try_new_rand(SysRng).expect("system RNG");
 
         let out_msg: &str = "#FERNET_TEST_MESSAGE#";
 
@@ -244,7 +264,7 @@ mod tests {
 
     #[test]
     fn small_buffer() {
-        let fernet = Fernet::new_rand(UnwrapErr(SysRng));
+        let fernet = Fernet::try_new_rand(SysRng).expect("system RNG");
 
         let test_msg: &str = "#FERNET_TEST_MESSAGE#";
 

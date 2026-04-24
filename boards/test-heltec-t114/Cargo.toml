@@ -1,0 +1,46 @@
+[package]
+name = "test-heltec-t114"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+description = "Minimal Embassy blinky test firmware for Heltec T114."
+
+[[bin]]
+name = "test-heltec-t114"
+path = "src/main.rs"
+
+[[bin]]
+name = "tft_pin_sweep"
+path = "src/bin/tft_pin_sweep.rs"
+
+[[bin]]
+name = "tft_sweep"
+path = "src/bin/tft_sweep.rs"
+
+[[bin]]
+name = "bl_p110_test"
+path = "src/bin/bl_p110_test.rs"
+
+[[bin]]
+name = "spi_pin_sweep"
+path = "src/bin/spi_pin_sweep.rs"
+
+[dependencies]
+embassy-executor = { version = "0.10", default-features = false, features = ["platform-cortex-m", "executor-thread"] }
+embassy-time = { version = "0.5", default-features = false }
+embedded-alloc = "0.6"
+mousefood = { git = "https://github.com/ratatui/mousefood", default-features = false }
+ratatui = { version = "0.30", default-features = false }
+defmt = { version = "1.0" }
+defmt-rtt = { version = "1.1" }
+panic-halt = "1.0"
+embassy-nrf = { version = "0.10", default-features = false, features = [
+    "nrf52840",
+    "time-driver-rtc1",
+    "gpiote",
+    "unstable-pac",
+    "defmt",
+] }
+cortex-m = { version = "0.7", features = ["critical-section-single-core"] }
+cortex-m-rt = { version = "0.7" }

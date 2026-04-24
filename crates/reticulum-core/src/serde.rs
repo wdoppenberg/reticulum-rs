@@ -142,7 +142,6 @@ impl Packet {
 mod tests {
     extern crate std;
     use getrandom::SysRng;
-    use rand_core::UnwrapErr;
     use std::println;
 
     use crate::{
@@ -172,7 +171,7 @@ mod tests {
                 hops: 0,
             },
             ifac: None,
-            destination: AddressHash::new_from_rand(UnwrapErr(SysRng)),
+            destination: AddressHash::try_new_from_rand(SysRng).expect("system RNG"),
             transport: None,
             context: PacketContext::None,
             data: StaticBuffer::new(),
@@ -199,7 +198,7 @@ mod tests {
                 hops: 0,
             },
             ifac: None,
-            destination: AddressHash::new_from_rand(UnwrapErr(SysRng)),
+            destination: AddressHash::try_new_from_rand(SysRng).expect("system RNG"),
             transport: None,
             context: PacketContext::None,
             data: StaticBuffer::new(),
@@ -231,7 +230,7 @@ mod tests {
                 ..Default::default()
             },
             ifac: Some(PacketIfac::try_new_from_slice(&[0xAA, 0xBB, 0xCC]).expect("valid ifac")),
-            destination: AddressHash::new_from_rand(UnwrapErr(SysRng)),
+            destination: AddressHash::try_new_from_rand(SysRng).expect("system RNG"),
             transport: None,
             context: PacketContext::None,
             data: StaticBuffer::new_from_slice(b"ifac"),
@@ -257,7 +256,7 @@ mod tests {
                 ..Default::default()
             },
             ifac: None,
-            destination: AddressHash::new_from_rand(UnwrapErr(SysRng)),
+            destination: AddressHash::try_new_from_rand(SysRng).expect("system RNG"),
             transport: None,
             context: PacketContext::None,
             data: StaticBuffer::new_from_slice(&[0x42; RETICULUM_MTU]),

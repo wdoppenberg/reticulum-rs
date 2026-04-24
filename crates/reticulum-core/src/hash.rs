@@ -5,7 +5,7 @@ use core::fmt;
 
 use crypto_common::typenum::Unsigned;
 use crypto_common::OutputSizeUser;
-use rand_core::CryptoRng;
+use rand_core::{CryptoRng, TryCryptoRng};
 use sha2::{Digest, Sha256};
 
 use crate::error::RnsError;
@@ -44,7 +44,6 @@ impl Hash {
         Self(hash)
     }
 
-    // TODO: replace CryptoRng with TryCryptoRng
     pub fn new_from_rand<R: CryptoRng>(mut rng: R) -> Self {
         let mut hash = [0u8; HASH_SIZE];
         let mut data = [0u8; HASH_SIZE];
@@ -53,6 +52,16 @@ impl Hash {
 
         create_hash(&data, &mut hash);
         Self(hash)
+    }
+
+    pub fn try_new_from_rand<R: TryCryptoRng>(mut rng: R) -> Result<Self, RnsError> {
+        let mut hash = [0u8; HASH_SIZE];
+        let mut data = [0u8; HASH_SIZE];
+        rng.try_fill_bytes(&mut data[..])
+            .map_err(|_| RnsError::Randomness)?;
+
+        create_hash(&data, &mut hash);
+        Ok(Self(hash))
     }
 
     pub fn as_slice(&self) -> &[u8] {
@@ -91,6 +100,10 @@ impl AddressHash {
 
     pub fn new_from_rand<R: CryptoRng>(rng: R) -> Self {
         Self::new_from_hash(&Hash::new_from_rand(rng))
+    }
+
+    pub fn try_new_from_rand<R: TryCryptoRng>(rng: R) -> Result<Self, RnsError> {
+        Ok(Self::new_from_hash(&Hash::try_new_from_rand(rng)?))
     }
 
     pub fn new_from_hex_string(hex_string: &str) -> Result<Self, RnsError> {
@@ -171,13 +184,13 @@ impl fmt::Display for Hash {
 mod tests {
 
     use getrandom::SysRng;
-    use rand_core::UnwrapErr;
 
     use crate::hash::AddressHash;
 
     #[test]
     fn address_hex_string() {
-        let original_address_hash = AddressHash::new_from_rand(UnwrapErr(SysRng));
+        let original_address_hash =
+            AddressHash::try_new_from_rand(SysRng).expect("system RNG available");
 
         let address_hash_hex = original_address_hash.to_hex_string();
 

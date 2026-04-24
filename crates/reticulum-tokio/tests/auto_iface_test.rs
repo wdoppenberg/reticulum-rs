@@ -135,11 +135,10 @@ async fn two_nodes_discover_each_other() {
 
     // Send a packet from A; B should receive it.
     let pkt = Packet::default();
-    mgr_a
-        .send(TxMessage {
-            tx_type: TxMessageType::Broadcast(None),
-            packet: pkt,
-        });
+    mgr_a.send(TxMessage {
+        tx_type: TxMessageType::Broadcast(None),
+        packet: pkt,
+    });
 
     let rx_b = mgr_b.receiver();
     let result = tokio::time::timeout(Duration::from_secs(3), async {

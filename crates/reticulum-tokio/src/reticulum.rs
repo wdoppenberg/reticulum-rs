@@ -192,7 +192,11 @@ fn load_or_create_identity(path: &Path) -> Result<PrivateIdentity, ReticulumErro
         Ok(identity)
     } else {
         log::info!("Generating new network identity");
-        let identity = PrivateIdentity::new_from_rand(rand_core::UnwrapErr(getrandom::SysRng));
+        let identity = PrivateIdentity::try_new_from_rand(getrandom::SysRng).map_err(|_| {
+            ReticulumError::Io(std::io::Error::other(
+                "failed to generate identity: RNG unavailable",
+            ))
+        })?;
         let hex = identity.to_hex_string();
         let raw: Vec<u8> = (0..hex.len() / 2)
             .map(|i| u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).unwrap())

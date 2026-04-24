@@ -275,10 +275,9 @@ impl<'a, const N: usize> InterfaceRouter<'a, N> {
     pub fn try_route(&self, msg: TxMessage) -> Result<(), TxMessage> {
         let mut all_ok = true;
         for entry in &self.ifaces {
-            if self.should_send(msg.tx_type, entry.address)
-                && entry.tx.try_send(msg).is_err() {
-                    all_ok = false;
-                }
+            if self.should_send(msg.tx_type, entry.address) && entry.tx.try_send(msg).is_err() {
+                all_ok = false;
+            }
         }
         if all_ok {
             Ok(())

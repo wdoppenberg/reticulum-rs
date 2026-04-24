@@ -92,9 +92,7 @@ async fn main() -> anyhow::Result<()> {
         config
             .to_file(&paths.config_path)
             .map_err(|e| anyhow::anyhow!("Failed to write tmp config: {}", e))?;
-        log::info!(
-            "tmp instance: TCP server on :{server_port}, client to :{client_port}"
-        );
+        log::info!("tmp instance: TCP server on :{server_port}, client to :{client_port}");
     } else if !paths.config_path.exists() {
         let toml = Config::generate_default_toml();
         std::fs::write(&paths.config_path, toml)?;
@@ -277,7 +275,9 @@ fn detect_issues(config: &Config) -> Vec<String> {
             InterfaceConfig::I2P(i) => !i.enabled,
         });
         if all_disabled {
-            issues.push("All network interfaces are disabled — peers cannot be discovered".to_string());
+            issues.push(
+                "All network interfaces are disabled — peers cannot be discovered".to_string(),
+            );
         }
     }
 
@@ -294,7 +294,10 @@ fn describe_fixes(config: &Config, issues: &[String]) -> Vec<String> {
         }
         if issue.contains("interface") {
             if config.interfaces.is_empty() {
-                fixes.push("Add  [interfaces.auto]  type = \"auto\"  enabled = true  (local multicast)".to_string());
+                fixes.push(
+                    "Add  [interfaces.auto]  type = \"auto\"  enabled = true  (local multicast)"
+                        .to_string(),
+                );
             } else {
                 fixes.push("Enable all currently-configured interfaces".to_string());
             }
@@ -322,11 +325,21 @@ fn apply_fixes(config: &mut Config) {
         // Enable any disabled interfaces.
         for iface in config.interfaces.values_mut() {
             match iface {
-                InterfaceConfig::Auto(a) => { a.enabled = true; }
-                InterfaceConfig::Tcp(t) => { t.enabled = true; }
-                InterfaceConfig::Udp(u) => { u.enabled = true; }
-                InterfaceConfig::Serial(s) => { s.enabled = true; }
-                InterfaceConfig::I2P(i) => { i.enabled = true; }
+                InterfaceConfig::Auto(a) => {
+                    a.enabled = true;
+                }
+                InterfaceConfig::Tcp(t) => {
+                    t.enabled = true;
+                }
+                InterfaceConfig::Udp(u) => {
+                    u.enabled = true;
+                }
+                InterfaceConfig::Serial(s) => {
+                    s.enabled = true;
+                }
+                InterfaceConfig::I2P(i) => {
+                    i.enabled = true;
+                }
             }
         }
     }
@@ -363,10 +376,7 @@ fn run_preflight_wizard(
     };
 
     disable_raw_mode()?;
-    execute!(
-        terminal.backend_mut(),
-        LeaveAlternateScreen,
-    )?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen,)?;
     terminal.show_cursor()?;
 
     Ok(result)
@@ -527,7 +537,8 @@ fn load_or_create_chat_identity(paths: &ReticulumPaths) -> anyhow::Result<Privat
         PrivateIdentity::new_from_hex_string(&hex)
             .map_err(|e| anyhow::anyhow!("failed to decode chat identity: {:?}", e))
     } else {
-        let identity = PrivateIdentity::new_from_rand(rand_core::UnwrapErr(getrandom::SysRng));
+        let identity =
+            PrivateIdentity::try_new_from_rand(getrandom::SysRng).expect("system RNG available");
         let hex = identity.to_hex_string();
         let raw: Vec<u8> = (0..hex.len() / 2)
             .map(|i| u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).unwrap())

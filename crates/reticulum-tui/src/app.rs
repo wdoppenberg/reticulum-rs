@@ -7,8 +7,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use reticulum_chat::{ChatEvent, ChatHandle, ChatMessage};
 use reticulum_core::destination::DestinationDesc;
 use reticulum_core::hash::AddressHash;
-use reticulum_tokio::{Config, ReticulumPaths};
 use reticulum_tokio::config::AutoInterfaceConfig;
+use reticulum_tokio::{Config, ReticulumPaths};
 
 /// Maximum messages kept per conversation.
 const MAX_MESSAGES: usize = 500;
@@ -234,20 +234,48 @@ impl App {
         let r = &mut self.config.reticulum;
         let l = &mut self.config.logging;
         match self.settings_cursor {
-            0  => { r.enable_transport = !r.enable_transport; }
-            1  => { r.share_instance = !r.share_instance; }
-            2  => { r.link_mtu_discovery = !r.link_mtu_discovery; }
-            3  => { r.use_implicit_proof = !r.use_implicit_proof; }
-            4  => { r.allow_probes = !r.allow_probes; }
-            5  => { r.enable_remote_management = !r.enable_remote_management; }
-            6  => { r.enable_discovery = !r.enable_discovery; }
-            7  => { r.discover_interfaces = !r.discover_interfaces; }
-            8  => { r.autoconnect_discovered_interfaces = !r.autoconnect_discovered_interfaces; }
-            9  => { r.panic_on_interface_error = !r.panic_on_interface_error; }
-            10 => { r.shared_instance_port = r.shared_instance_port.wrapping_add(1); }
-            11 => { r.instance_control_port = r.instance_control_port.wrapping_add(1); }
-            12 => { if l.loglevel < 7 { l.loglevel += 1; } }
-            _  => {}
+            0 => {
+                r.enable_transport = !r.enable_transport;
+            }
+            1 => {
+                r.share_instance = !r.share_instance;
+            }
+            2 => {
+                r.link_mtu_discovery = !r.link_mtu_discovery;
+            }
+            3 => {
+                r.use_implicit_proof = !r.use_implicit_proof;
+            }
+            4 => {
+                r.allow_probes = !r.allow_probes;
+            }
+            5 => {
+                r.enable_remote_management = !r.enable_remote_management;
+            }
+            6 => {
+                r.enable_discovery = !r.enable_discovery;
+            }
+            7 => {
+                r.discover_interfaces = !r.discover_interfaces;
+            }
+            8 => {
+                r.autoconnect_discovered_interfaces = !r.autoconnect_discovered_interfaces;
+            }
+            9 => {
+                r.panic_on_interface_error = !r.panic_on_interface_error;
+            }
+            10 => {
+                r.shared_instance_port = r.shared_instance_port.wrapping_add(1);
+            }
+            11 => {
+                r.instance_control_port = r.instance_control_port.wrapping_add(1);
+            }
+            12 => {
+                if l.loglevel < 7 {
+                    l.loglevel += 1;
+                }
+            }
+            _ => {}
         }
         self.status = "Modified (unsaved). Press [w] to write to disk.".to_string();
     }
@@ -257,10 +285,18 @@ impl App {
         let r = &mut self.config.reticulum;
         let l = &mut self.config.logging;
         match self.settings_cursor {
-            10 => { r.shared_instance_port = r.shared_instance_port.saturating_sub(1); }
-            11 => { r.instance_control_port = r.instance_control_port.saturating_sub(1); }
-            12 => { if l.loglevel > 0 { l.loglevel -= 1; } }
-            _  => {}
+            10 => {
+                r.shared_instance_port = r.shared_instance_port.saturating_sub(1);
+            }
+            11 => {
+                r.instance_control_port = r.instance_control_port.saturating_sub(1);
+            }
+            12 => {
+                if l.loglevel > 0 {
+                    l.loglevel -= 1;
+                }
+            }
+            _ => {}
         }
         self.status = "Modified (unsaved). Press [w] to write to disk.".to_string();
     }
@@ -294,7 +330,8 @@ impl App {
                 );
             }
             _ => {
-                self.status = "An interface named 'auto' exists but is not AutoInterface.".to_string();
+                self.status =
+                    "An interface named 'auto' exists but is not AutoInterface.".to_string();
             }
         }
     }
@@ -303,7 +340,10 @@ impl App {
     pub fn settings_save(&mut self) {
         match self.config.to_file(&self.config_path) {
             Ok(()) => {
-                self.status = format!("Config saved to {}. Restart to apply.", self.config_path.display());
+                self.status = format!(
+                    "Config saved to {}. Restart to apply.",
+                    self.config_path.display()
+                );
             }
             Err(e) => {
                 self.status = format!("Save failed: {}", e);

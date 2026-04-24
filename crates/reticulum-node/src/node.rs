@@ -22,13 +22,13 @@
 //! use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel};
 //! use reticulum_embassy::iface::{RxMessage, TxMessage, InterfaceRouter};
 //! use reticulum_node::node::run;
-//! use reticulum_node::config::NodeConfig;
+//! use reticulum_node::config::RouterConfig;
 //!
 //! static RX: Channel<CriticalSectionRawMutex, RxMessage, 4> = Channel::new();
 //! static TX0: Channel<CriticalSectionRawMutex, TxMessage, 4> = Channel::new();
 //!
 //! // In your embassy task:
-//! let config = NodeConfig::embedded();
+//! let config = RouterConfig::embedded();
 //! let mut router = InterfaceRouter::<4>::new();
 //! router.register(iface_addr, TX0.sender().into()).unwrap();
 //!
@@ -42,7 +42,7 @@ use reticulum_core::routing::{RxMessage, TxMessage, TxMessageType};
 
 use reticulum_embassy::iface::InterfaceRouter;
 
-use crate::config::NodeConfig;
+use crate::config::RouterConfig;
 use crate::router::{RouteDecision, Router};
 
 // ── run() ─────────────────────────────────────────────────────────────────────
@@ -60,16 +60,12 @@ use crate::router::{RouteDecision, Router};
 ///
 /// This function never returns under normal operation.
 pub async fn run<const N_SEEN: usize, const N_PATHS: usize, const N_IFACES: usize>(
-    config: NodeConfig,
+    config: RouterConfig,
     node_addr: AddressHash,
     iface_router: InterfaceRouter<'_, N_IFACES>,
     rx: DynamicReceiver<'_, RxMessage>,
 ) {
-    let mut router = Router::<N_SEEN, N_PATHS>::new(
-        node_addr,
-        config.forward_announces,
-        config.transport_enabled,
-    );
+    let mut router = Router::<N_SEEN, N_PATHS>::new(node_addr, config);
 
     loop {
         let msg = rx.receive().await;

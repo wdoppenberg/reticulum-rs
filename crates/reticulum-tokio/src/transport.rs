@@ -1,13 +1,12 @@
 use announce_limits::AnnounceLimits;
 use announce_table::AnnounceTable;
+use getrandom::SysRng;
 use link_table::LinkTable;
 use packet_cache::PacketCache;
 use path_requests::create_path_request_destination;
 use path_requests::PathRequests;
 use path_requests::TagBytes;
 use path_table::PathTable;
-use getrandom::SysRng;
-use rand_core::UnwrapErr;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -159,7 +158,8 @@ impl Default for TransportConfig {
     fn default() -> Self {
         Self {
             name: "tp".into(),
-            node_address: AddressHash::new_from_rand(UnwrapErr(SysRng)),
+            node_address: AddressHash::try_new_from_rand(SysRng)
+                .unwrap_or(AddressHash::new_empty()),
             broadcast: false,
             retransmit: false,
         }
@@ -291,18 +291,10 @@ impl Transport {
         &self,
         destination: &Arc<Mutex<SingleInputDestination>>,
         app_data: Option<&[u8]>,
-    ) {
-        self.handler
-            .lock()
-            .await
-            .send_packet(
-                destination
-                    .lock()
-                    .await
-                    .announce(UnwrapErr(SysRng), app_data)
-                    .expect("valid announce packet"),
-            )
-            .await;
+    ) -> Result<(), reticulum_core::error::RnsError> {
+        let packet = destination.lock().await.try_announce(SysRng, app_data)?;
+        self.handler.lock().await.send_packet(packet).await;
+        Ok(())
     }
 
     pub async fn send_broadcast(&self, packet: Packet, from_iface: Option<AddressHash>) {
@@ -463,7 +455,8 @@ impl Transport {
             destination,
             self.link_out_event_tx.clone(),
             self.link_out_data_tx.clone(),
-        );
+        )
+        .expect("system RNG");
 
         let packet = link.request();
 
@@ -842,7 +835,7 @@ async fn handle_path_request<'a>(
             let response = dest
                 .lock()
                 .await
-                .path_response(UnwrapErr(SysRng), None)
+                .try_path_response(SysRng, None)
                 .expect("valid path response");
 
             handler
@@ -945,7 +938,12 @@ async fn handle_link_request_as_destination<'a>(
                 );
 
                 if let Ok(mut link) = link {
-                    handler.send_packet(link.prove()).await;
+                    if let Ok(proof_packet) = link.prove() {
+                        handler.send_packet(proof_packet).await;
+                    } else {
+                        log::error!("tp({}): failed to build link proof", handler.config.name);
+                        return;
+                    }
 
                     log::debug!(
                         "tp({}): save input link {} for destination {}",
@@ -1156,14 +1154,15 @@ async fn manage_transport(
                 let mut handler = handler.lock().await;
 
                 if PACKET_TRACE {
-                    log::debug!("tp: << rx({}) = {} {}", message.address, packet, packet.hash());
+                    log::debug!(
+                        "tp: << rx({}) = {} {}",
+                        message.address,
+                        packet,
+                        packet.hash()
+                    );
                 }
 
-                if handle_fixed_destinations(
-                    &packet,
-                    &mut handler,
-                    message.address
-                ).await {
+                if handle_fixed_destinations(&packet, &mut handler, message.address).await {
                     continue;
                 }
 
@@ -1181,20 +1180,21 @@ async fn manage_transport(
                 if handler.config.broadcast && packet.header.packet_type != PacketType::Announce {
                     // TODO: remove seperate handling for announces in handle_announce.
                     // Send broadcast message expect current iface address
-                    handler.send(TxMessage { tx_type: TxMessageType::Broadcast(Some(message.address)), packet }).await;
+                    handler
+                        .send(TxMessage {
+                            tx_type: TxMessageType::Broadcast(Some(message.address)),
+                            packet,
+                        })
+                        .await;
                 }
 
                 match packet.header.packet_type {
-                    PacketType::Announce => handle_announce(
-                        &packet,
-                        handler,
-                        message.address
-                    ).await,
-                    PacketType::LinkRequest => handle_link_request(
-                        &packet,
-                        message.address,
-                        handler
-                    ).await,
+                    PacketType::Announce => {
+                        handle_announce(&packet, handler, message.address).await
+                    }
+                    PacketType::LinkRequest => {
+                        handle_link_request(&packet, message.address, handler).await
+                    }
                     PacketType::Proof => handle_proof(&packet, handler).await,
                     PacketType::Data => handle_data(&packet, handler).await,
                 }

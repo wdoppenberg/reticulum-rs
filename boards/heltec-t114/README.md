@@ -1,23 +1,20 @@
 # Deploying reticulum-node on the Heltec T114
 
-This guide covers everything needed to build, flash, and monitor a
-`reticulum-node` RNode binary on the **Heltec T114** (nRF52840 + SX1262 LoRa)
-using `probe-rs`.
+This guide covers everything needed to build and flash the `heltec-t114`
+firmware on the **Heltec T114** (nRF52840 + SX1262 LoRa).
+
+The primary flashing method is **UF2 over USB-C** — no debug probe required.
+probe-rs over SWD is documented separately as an advanced option.
 
 ---
 
 ## Hardware required
 
-| Item         | Notes                                                                |
-|--------------|----------------------------------------------------------------------|
-| Heltec T114  | nRF52840 + SX1262, integrated LoRa antenna connector                 |
-| Debug probe  | J-Link, CMSIS-DAP, or compatible (e.g. nRF52840-DK acts as a J-Link) |
-| SWD cable    | 10-pin or 6-pin TagConnect / dupont depending on your probe          |
-| LoRa antenna | 868 MHz (EU) or 915 MHz (US/AUS) — **do not TX without one**         |
-| USB-C cable  | Power only; not used for flashing                                    |
-
-The T114 exposes a 4-pin SWD header (SWDIO, SWDCLK, GND, VCC) near the
-USB-C connector.  Consult the Heltec schematic for the exact pad locations.
+| Item         | Notes                                                         |
+|--------------|---------------------------------------------------------------|
+| Heltec T114  | nRF52840 + SX1262, integrated LoRa antenna connector          |
+| USB-C cable  | Data cable required (charge-only cables will not work)        |
+| LoRa antenna | 868 MHz (EU) or 915 MHz (US/AUS) — **do not TX without one** |
 
 ---
 
@@ -32,243 +29,139 @@ rustup target add thumbv7em-none-eabihf
 The nRF52840 is a Cortex-M4F.  The `thumbv7em-none-eabihf` target produces
 Thumb-2 code with hardware floating-point, which is what `embassy-nrf` expects.
 
-### probe-rs
+### cargo-binutils + llvm-tools
+
+Used to convert the ELF to Intel HEX for UF2 packaging.  Uses the LLVM tools
+already bundled with the Rust toolchain — no separate ARM toolchain needed.
 
 ```sh
-cargo install probe-rs-tools --locked
+rustup component add llvm-tools
+cargo install cargo-binutils
 ```
 
-Verify the installation:
+### uf2conv.py
+
+`uf2conv.py` is a single-file Python 3 script from the Microsoft UF2
+repository.  Download it once and keep it somewhere on your `PATH`:
 
 ```sh
-probe-rs --version
-# probe-rs 0.31.0 (or later)
+curl -O https://raw.githubusercontent.com/microsoft/uf2/master/utils/uf2conv.py
+chmod +x uf2conv.py
+# optional: mv uf2conv.py /usr/local/bin/uf2conv.py
 ```
 
-> **Linux udev rules** — if `probe-rs list` shows no probes, install the udev
-> rules bundled with probe-rs:
->
-> ```sh
-> probe-rs complete install-udev-rules
-> ```
->
-> Then re-plug the debug probe and run `probe-rs list` again.
+### flip-link (required)
 
-### flip-link (stack overflow protection — recommended)
+`flip-link` is set as the linker in `.cargo/config.toml` and must be installed:
 
 ```sh
 cargo install flip-link
 ```
 
-Add to `.cargo/config.toml` if you want overflow detection:
-
-```toml
-[target.thumbv7em-none-eabihf]
-linker = "flip-link"
-```
-
 ---
 
-## 2. Connect the debug probe
+## 2. Enter DFU mode
 
-Attach the probe to the T114 SWD header:
+**Double-tap the RESET button within ~0.5 seconds.**  A USB mass-storage
+device named **`HT-n5262`** appears on your computer.  If you miss the timing
+the board boots normally — just try again.
 
-| Probe pin | T114 pad |
-|-----------|----------|
-| SWDIO     | SWDIO    |
-| SWDCLK    | SWDCLK   |
-| GND       | GND      |
-| VCC (opt) | 3V3      |
-
-Confirm probe-rs can see the chip:
-
-```sh
-probe-rs list
-# [0]: J-Link (...)
-
-probe-rs chip info nRF52840_xxAA
-# nRF52840_xxAA
-# Cores (1):
-#     - main (Armv7em)
-# NVM: 0x00000000..0x00100000 (1.0 MiB)
-# RAM: 0x20000000..0x20040000 (256.0 KiB)
-```
+> **If the board previously had Meshtastic firmware:** the Meshtastic partition
+> layout can prevent a custom UF2 from booting correctly.  Run a factory erase
+> first by downloading
+> [`nrf_erase2.uf2`](https://github.com/meshtastic/nrf52_factory_erase) and
+> dragging it onto the `HT-n5262` drive.  The board reboots; double-tap RESET
+> again before continuing.
 
 ---
 
 ## 3. Build the binary
 
-All commands below are run from the **workspace root**
-(`reticulum-rs/`) unless stated otherwise.
+The default `memory.x` is configured for UF2 flashing — the firmware starts
+at `0x26000`, matching the Adafruit UF2 bootloader's hardcoded application
+entry point.
 
-The `.cargo/config.toml` inside `crates/reticulum-node/` sets the default
-target to `thumbv7em-none-eabihf`, so `--target` can be omitted when you
-`cd` into the crate first.
-
-### Release build (recommended for flashing)
+Build from within the board directory (`.cargo/config.toml` sets the target
+automatically, so `--target` can be omitted):
 
 ```sh
-cargo build \
-  --release \
-  --package reticulum-node \
-  --bin nrf52840 \
-  --features reticulum-node/target-nrf52840 \
-  --target thumbv7em-none-eabihf
+cd boards/heltec-t114
+
+# Release (recommended for flashing)
+cargo build --release
+
+# Debug (larger binary, richer logs)
+cargo build
 ```
 
-The ELF lands at:
+ELF lands at `target/thumbv7em-none-eabihf/release/heltec-t114` (or `debug/`)
+relative to the workspace root.
 
-```
-target/thumbv7em-none-eabihf/release/nrf52840
-```
+---
 
-### Debug build (for development, larger binary, richer logs)
+## 4. Flash via UF2
+
+### Step 1 — Convert ELF → HEX → UF2
+
+Run these from the **workspace root** (`reticulum-rs/`).  Using Intel HEX
+format means the flash addresses are read directly from the ELF — no `--base`
+flag needed and no risk of an address mismatch with `memory.x`.
 
 ```sh
-cargo build \
-  --package reticulum-node \
-  --bin nrf52840 \
-  --features reticulum-node/target-nrf52840 \
-  --target thumbv7em-none-eabihf
+cd boards/heltec-t114
+cargo objcopy --release -- -O ihex /tmp/heltec-t114.hex
+
+cd ../..
+python3 uf2conv.py /tmp/heltec-t114.hex \
+  --family 0xADA52840 \
+  --convert \
+  --output /tmp/heltec-t114.uf2
 ```
 
-ELF at `target/thumbv7em-none-eabihf/debug/nrf52840`.
+### Step 2 — Copy the UF2 to the device
 
-> **Tip:** If you `cd crates/reticulum-node` first, the `.cargo/config.toml`
-> sets the default target automatically, so you can drop `--target` and shorten
-> `--package`:
+Make sure the board is in DFU mode (section 2) before copying.
+
+```sh
+# macOS — use cat to avoid extended-attribute errors from cp
+cat heltec-t114.uf2 > /Volumes/HT-n5262/heltec-t114.uf2
+
+# Linux
+cp heltec-t114.uf2 /media/$USER/HT-n5262/
+```
+
+The board reboots automatically once it receives the complete file and the
+`HT-n5262` drive disappears.
+
+> **macOS — do not use Finder drag-and-drop or `cp`:** both try to write
+> extended attributes and resource forks to the FAT volume, causing
+> "Error code -36" or "could not copy extended attributes" errors that may
+> result in an incomplete flash.  Use `cat >` as shown above.
 >
-> ```sh
-> cd crates/reticulum-node
-> cargo build --release --bin nrf52840 --features target-nrf52840
-> ```
+> If `HT-n5262` does not appear in `/Volumes/`, check Finder's sidebar under
+> Locations, or run `diskutil list` to find the mount point.
+>
+> After the board reboots the volume disappears and macOS shows a
+> **"Disk Not Ejected Properly"** notification — this is expected and harmless.
 
 ---
 
-## 4. Flash the binary
+## 5. Erase flash (reset identity)
 
-### Option A — `probe-rs run` (flash + attach RTT log in one step)
+To reset the stored node identity so a new one is generated on the next boot,
+erase only the identity page via DFU mode:
 
-This is the recommended workflow during development.  `probe-rs run` flashes
-the binary, resets the chip, and immediately streams defmt logs over RTT.
-
-```sh
-probe-rs run \
-  --chip nRF52840_xxAA \
-  target/thumbv7em-none-eabihf/release/nrf52840
-```
-
-You should see output like:
-
-```
-INFO  reticulum-node starting on nRF52840 / Heltec T114
-INFO  storage: no identity in flash — generating new one
-INFO  storage: identity stored to flash @ 0x000FF000
-INFO  node address: AddressHash(ab:cd:ef:...)
-DEBUG iface <addr>: driver started
-```
-
-Subsequent boots load the stored identity from flash:
-
-```
-INFO  reticulum-node starting on nRF52840 / Heltec T114
-DEBUG storage: loaded identity from flash @ 0x000FF000
-INFO  node address: AddressHash(ab:cd:ef:...)   ← same address as before
-DEBUG iface <addr>: driver started
-```
-
-Press `Ctrl-C` to detach from RTT without resetting the device.
-
-### Option B — `probe-rs download` (flash only, no RTT)
-
-Useful in CI or when you want to flash and walk away.
-
-```sh
-probe-rs download \
-  --chip nRF52840_xxAA \
-  --verify \
-  target/thumbv7em-none-eabihf/release/nrf52840
-```
-
-`--verify` re-reads the flash after writing and compares it to the ELF
-contents.  Omit it to save a few seconds on large binaries.
-
-Reset the chip after download:
-
-```sh
-probe-rs reset --chip nRF52840_xxAA
-```
-
-### Option C — `cargo run` (shortcut via `.cargo/config.toml`)
-
-From inside `crates/reticulum-node/`, the `runner` key in `.cargo/config.toml`
-wires `cargo run` directly to `probe-rs run`:
-
-```sh
-cd crates/reticulum-node
-cargo run --release --bin nrf52840 --features target-nrf52840
-```
-
-This is equivalent to Option A but saves typing.
+1. Enter DFU mode (double-tap RESET).
+2. Download [`nrf_erase2.uf2`](https://github.com/meshtastic/nrf52_factory_erase)
+   and copy it to `HT-n5262`.  The board reboots with a clean flash.
+3. Re-flash the firmware (section 4).
 
 ---
 
-## 5. Erase flash (reset identity or recover a bricked board)
-
-To erase all flash — including the stored identity — so the node generates a
-new address on the next boot:
-
-```sh
-probe-rs erase --chip nRF52840_xxAA --chip-erase
-```
-
-> **Warning:** this also wipes the firmware.  Re-flash after erasing.
-
-To erase only the identity page without touching the firmware, erase the
-4 KB sector at `0x000FF000`:
-
-```sh
-probe-rs erase \
-  --chip nRF52840_xxAA \
-  --sector 0x000FF000
-```
-
----
-
-## 6. Attach to a running node (RTT only)
-
-If the node is already running and you want to read its logs without
-interrupting it:
-
-```sh
-probe-rs attach --chip nRF52840_xxAA
-```
-
----
-
-## 7. Log levels
-
-The default log level is set in `.cargo/config.toml`:
-
-```toml
-[env]
-DEFMT_LOG = "debug"
-```
-
-Override at build time:
-
-```sh
-DEFMT_LOG=info cargo run --release --bin nrf52840 --features target-nrf52840
-```
-
-Valid levels: `error`, `warn`, `info`, `debug`, `trace`.
-
----
-
-## 8. LoRa frequency / radio configuration
+## 6. LoRa frequency / radio configuration
 
 The binary uses `LoraConfig::eu_868()` by default (868 MHz, SF7, BW125,
-CR4/5, 14 dBm TX).  To change region, edit `src/bin/nrf52840.rs`:
+CR4/5, 14 dBm TX).  To change region, edit `src/main.rs`:
 
 ```rust
 // EU 868 MHz (default)
@@ -293,11 +186,7 @@ Operating the SX1262 without an antenna risks damaging the RF front-end.
 
 ---
 
-## 9. Pin assignments
-
-The binary configures these nRF52840 pins by default.  Verify against the
-Heltec T114 schematic before flashing; pin silk-screen labels may differ from
-the nRF pad numbers.
+## 7. Pin assignments
 
 | Signal     | nRF52840 pin | Direction | Notes                     |
 |------------|--------------|-----------|---------------------------|
@@ -311,7 +200,7 @@ the nRF pad numbers.
 | ANT_RX_SW  | P0.13        | Output    | RF switch RX path (high)  |
 | ANT_TX_SW  | P0.14        | Output    | RF switch TX path (high)  |
 
-To change a pin, edit the type aliases at the top of `src/bin/nrf52840.rs`:
+To change a pin, edit the type aliases at the top of `src/main.rs`:
 
 ```rust
 type PinDio1 = peripherals::P0_20;  // ← change to your pin
@@ -319,34 +208,32 @@ type PinDio1 = peripherals::P0_20;  // ← change to your pin
 
 ---
 
-## 10. Flash layout
+## 8. Flash layout
 
-| Region | Start address | Size | Contents |
-|--------|---------------|------|----------|
-| Firmware | `0x0000_0000` | ~1 MB | Binary (grows upward) |
-| Identity | `0x000F_F000` | 4 KB (1 page) | 68-byte identity record + `0xFF` padding |
+| Region      | Start address  | Size    | Contents                                         |
+|-------------|----------------|---------|--------------------------------------------------|
+| MBR         | `0x0000_0000`  | 4 KB    | Nordic Master Boot Record                        |
+| SD reserved | `0x0000_1000`  | ~148 KB | Reserved for S140 v6 SoftDevice (unused/empty)   |
+| Firmware    | `0x0002_6000`  | 820 KB  | Binary (grows upward)                            |
+| Identity    | `0x000F_3000`  | 4 KB    | Node identity record (stored by firmware)        |
+| Bootloader  | `0x000F_4000`  | ~40 KB  | Adafruit UF2 bootloader                          |
+| Settings    | `0x000F_F000`  | 4 KB    | Bootloader settings (do not write from firmware) |
 
-The identity page is the **last 4 KB page** of the 1 MB internal flash.
-It is never touched by a normal firmware flash (the linker script places
-code from address 0 upward, well below 0xFF000 for a typical Reticulum
-binary).
-
-If you move `IDENTITY_FLASH_OFFSET` in `src/bin/nrf52840.rs`, keep it
-aligned to a 4 KB boundary (the nRF52840's minimum erase granularity).
+The T114's Adafruit UF2 bootloader is compiled against S140 v6.1.1 and
+unconditionally jumps to `0x26000` as the application entry point, even when
+no SoftDevice is present.  The identity page shares the last 4 KB with the
+bootloader settings region and is never touched by a normal firmware flash.
 
 ---
 
-## 11. Troubleshooting
+## 9. Troubleshooting
 
 | Symptom | Likely cause | Fix |
 |---------|-------------|-----|
-| `probe-rs list` shows no probes | USB or driver issue | Check cable; install udev rules (Linux); try a different USB port |
-| `Error: The debug probe is not supported` | Probe firmware too old | Update J-Link firmware or use a CMSIS-DAP probe |
-| `Error: Failed to write to address 0x000FF000` | Identity page not erased before write | The driver calls `erase()` before `write()`; check that `ERASE_SIZE` alignment is correct |
-| Node generates a new address on every boot | Identity page being erased by `probe-rs erase --chip-erase` | Use `--sector` erase if you only want to wipe the firmware |
-| `LoRa init` panic at startup | SPI wiring issue or SX1262 not powered | Check P0.17 BUSY line; verify SPI connections with a logic analyser |
+| `HT-n5262` drive does not appear | Double-tap timing too slow/fast | Try again; the window is ~0.5 s |
+| Board reboots but firmware does not start | Meshtastic partition layout conflict | Run factory erase (section 5) then re-flash |
+| `LoRa init` panic at startup | SPI wiring issue or SX1262 not powered | Check P0.17 BUSY line; verify SPI connections |
 | No packets received / transmitted | Wrong frequency or missing antenna | Verify `LoraConfig` region preset and attach a resonant antenna |
-| defmt output garbled | `DEFMT_LOG` mismatch between build and probe-rs version | Rebuild with the same probe-rs version used at runtime |
 
 ---
 
@@ -355,27 +242,130 @@ aligned to a 4 KB boundary (the nRF52840's minimum erase granularity).
 ```sh
 # 1. Install prerequisites (once)
 rustup target add thumbv7em-none-eabihf
+rustup component add llvm-tools
+cargo install flip-link cargo-binutils
+curl -O https://raw.githubusercontent.com/microsoft/uf2/master/utils/uf2conv.py
+
+# 2. Build (from the board directory)
+cd boards/heltec-t114
+cargo build --release
+
+# 3. Convert to UF2 (from workspace root)
+cd ../..
+cd boards/heltec-t114
+cargo objcopy --release -- -O ihex /tmp/heltec-t114.hex
+cd ../..
+python3 uf2conv.py /tmp/heltec-t114.hex \
+  --family 0xADA52840 --convert --output /tmp/heltec-t114.uf2
+
+# 4. Flash (double-tap RESET first, then copy when HT-n5262 appears)
+cat /tmp/heltec-t114.uf2 > /Volumes/HT-n5262/heltec-t114.uf2   # macOS
+```
+
+---
+
+## Advanced: flashing with probe-rs (SWD debug probe)
+
+probe-rs gives you flash + live RTT logs in one step, but requires a hardware
+debug probe wired to the T114's SWD header.
+
+> **Important:** probe-rs flashes from address `0x0`, overwriting the Nordic
+> MBR and disabling the UF2 bootloader.  After using probe-rs you can no longer
+> use the USB DFU method unless you restore the bootloader.  Only use this path
+> if you have a probe permanently available.
+
+### Additional hardware
+
+| Item        | Notes                                                                |
+|-------------|----------------------------------------------------------------------|
+| Debug probe | J-Link, CMSIS-DAP, or compatible (e.g. nRF52840-DK acts as a J-Link)|
+| SWD cable   | 10-pin or 6-pin TagConnect / dupont depending on your probe          |
+
+### Install probe-rs
+
+```sh
 cargo install probe-rs-tools --locked
+```
 
-# 2. Build
-cargo build --release \
-  --package reticulum-node \
-  --bin nrf52840 \
-  --features reticulum-node/target-nrf52840 \
-  --target thumbv7em-none-eabihf
+> **Linux udev rules** — if `probe-rs list` shows no probes:
+> ```sh
+> probe-rs complete install-udev-rules
+> ```
 
-# 3. Flash + attach logs
+### Update memory.x for probe-rs
+
+Change `boards/heltec-t114/memory.x` to start flash at `0x0` (probe-rs flashes
+the full address space directly, bypassing the bootloader entirely):
+
+```
+MEMORY
+{
+  FLASH : ORIGIN = 0x00000000, LENGTH = 1024K
+  RAM   : ORIGIN = 0x20000000, LENGTH = 256K
+}
+```
+
+### Connect the debug probe
+
+| Probe pin | T114 pad |
+|-----------|----------|
+| SWDIO     | SWDIO    |
+| SWDCLK    | SWDCLK   |
+| GND       | GND      |
+| VCC (opt) | 3V3      |
+
+Confirm probe-rs can see the chip:
+
+```sh
+probe-rs list
+probe-rs chip info nRF52840_xxAA
+```
+
+### Flash + attach RTT logs
+
+```sh
+cd boards/heltec-t114
+cargo build --release
+
 probe-rs run \
   --chip nRF52840_xxAA \
-  target/thumbv7em-none-eabihf/release/nrf52840
+  ../../target/thumbv7em-none-eabihf/release/heltec-t114
+```
 
-# 4. Flash only (no logs)
-probe-rs download --chip nRF52840_xxAA --verify \
-  target/thumbv7em-none-eabihf/release/nrf52840
+### Flash only (no RTT)
 
-# 5. Erase all flash (resets identity)
+```sh
+probe-rs download \
+  --chip nRF52840_xxAA \
+  --verify \
+  target/thumbv7em-none-eabihf/release/heltec-t114
+
+probe-rs reset --chip nRF52840_xxAA
+```
+
+### Log levels
+
+```toml
+# .cargo/config.toml
+[env]
+DEFMT_LOG = "debug"
+```
+
+Override at build time:
+
+```sh
+cd boards/heltec-t114
+DEFMT_LOG=info cargo build --release
+```
+
+Valid levels: `error`, `warn`, `info`, `debug`, `trace`.
+
+### Erase flash via probe-rs
+
+```sh
+# Erase everything (also wipes bootloader and identity)
 probe-rs erase --chip nRF52840_xxAA --chip-erase
 
-# 6. Attach to running node logs
-probe-rs attach --chip nRF52840_xxAA
+# Erase only the identity page
+probe-rs erase --chip nRF52840_xxAA --sector 0x000FF000
 ```

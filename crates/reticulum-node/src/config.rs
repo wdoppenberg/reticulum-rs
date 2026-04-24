@@ -1,8 +1,14 @@
 //! Node and LoRa configuration types.
 //!
-//! [`NodeConfig`] is the top-level configuration for a `reticulum-node`
-//! instance.  [`LoraConfig`] carries all radio parameters and includes
-//! factory presets for common Reticulum LoRa frequency plans.
+//! [`RouterConfig`] controls routing behaviour (announce forwarding, transport
+//! mode).  [`LoraConfig`] carries all radio parameters and includes factory
+//! presets for common Reticulum LoRa frequency plans.  The two types are kept
+//! separate because they are consumed at different call sites:
+//! [`LoraConfig`] is passed to [`LoraInterface::new`], while [`RouterConfig`]
+//! is passed to [`run`].
+//!
+//! [`LoraInterface::new`]: crate::lora::LoraInterface::new
+//! [`run`]: crate::node::run
 //!
 //! All types are `no_std` compatible and `Copy` so they can live in
 //! `static` storage without any allocation.
@@ -10,6 +16,7 @@
 // ── LoRa configuration ────────────────────────────────────────────────────────
 
 /// LoRa spreading factor.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SpreadingFactor {
     /// SF7 — fastest, shortest range.
@@ -27,6 +34,7 @@ pub enum SpreadingFactor {
 }
 
 /// LoRa bandwidth in kHz.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Bandwidth {
     /// 125 kHz (Reticulum default).
@@ -38,6 +46,7 @@ pub enum Bandwidth {
 }
 
 /// LoRa coding rate denominator (4/x).
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CodingRate {
     /// 4/5 — most error correction (Reticulum default).
@@ -118,38 +127,32 @@ impl Default for LoraConfig {
     }
 }
 
-// ── Node configuration ────────────────────────────────────────────────────────
+// ── Router configuration ──────────────────────────────────────────────────────
 
-/// Top-level configuration for a `reticulum-node` instance.
+/// Routing behaviour configuration passed to [`run`](crate::node::run).
+///
+/// Radio parameters belong in [`LoraConfig`]; deduplication and path-table
+/// sizes are const-generic parameters on [`Router`](crate::router::Router)
+/// and [`run`](crate::node::run) — they are intentionally not runtime values.
 #[derive(Debug, Clone, Copy)]
-pub struct NodeConfig {
-    /// LoRa radio parameters.
-    pub lora: LoraConfig,
-    /// Maximum number of recently-seen packet hashes to track for
-    /// deduplication.  Must be a power of two.  Recommended: 64.
-    pub dedup_capacity: usize,
-    /// Maximum number of path-table entries.  Recommended: 64.
-    pub path_table_capacity: usize,
-    /// Whether to forward announces received on one interface to others.
+pub struct RouterConfig {
+    /// Forward announces received on one interface to all others.
     pub forward_announces: bool,
-    /// Whether to forward data packets between interfaces (transport mode).
+    /// Forward data packets between interfaces (transport / relay mode).
     pub transport_enabled: bool,
 }
 
-impl NodeConfig {
-    /// Sensible defaults for a low-memory embedded node.
+impl RouterConfig {
+    /// Sensible defaults for an embedded forwarding node (both flags enabled).
     pub const fn embedded() -> Self {
         Self {
-            lora: LoraConfig::eu_868(),
-            dedup_capacity: 64,
-            path_table_capacity: 32,
             forward_announces: true,
             transport_enabled: true,
         }
     }
 }
 
-impl Default for NodeConfig {
+impl Default for RouterConfig {
     fn default() -> Self {
         Self::embedded()
     }

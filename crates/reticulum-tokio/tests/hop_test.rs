@@ -2,7 +2,6 @@ use std::sync::Once;
 use std::time::Duration;
 
 use getrandom::SysRng;
-use rand_core::UnwrapErr;
 use reticulum_core::destination::DestinationName;
 use reticulum_core::identity::PrivateIdentity;
 use reticulum_tokio::tcp_client::TcpClient;
@@ -27,7 +26,9 @@ async fn build_transport_full(
 ) -> Transport {
     let mut config = TransportConfig::new(
         name,
-        *PrivateIdentity::new_from_rand(UnwrapErr(SysRng)).address_hash(),
+        *PrivateIdentity::try_new_from_rand(SysRng)
+            .expect("system RNG")
+            .address_hash(),
         true,
     );
 
@@ -100,7 +101,10 @@ async fn calculate_hop_distance() {
     time::sleep(Duration::from_secs(2)).await;
 
     println!("======");
-    transport_a.send_announce(&dest_a, None).await;
+    transport_a
+        .send_announce(&dest_a, None)
+        .await
+        .expect("announce");
 
     transport_b.recv_announces().await;
     transport_c.recv_announces().await;
@@ -155,7 +159,10 @@ async fn remote_path_request_and_response() {
 
     time::sleep(Duration::from_secs(2)).await;
 
-    transport_c.send_announce(&dest_c, None).await;
+    transport_c
+        .send_announce(&dest_c, None)
+        .await
+        .expect("announce");
     transport_b.recv_announces().await;
 
     time::sleep(Duration::from_secs(2)).await;
@@ -166,7 +173,10 @@ async fn remote_path_request_and_response() {
     time::pause();
     time::advance(time::Duration::from_secs(3600)).await;
 
-    transport_b.send_announce(&dest_b, None).await;
+    transport_b
+        .send_announce(&dest_b, None)
+        .await
+        .expect("announce");
     transport_a.recv_announces().await;
     transport_a.request_path(&dest_c_hash, None, None).await;
 

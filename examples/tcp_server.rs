@@ -11,7 +11,7 @@ async fn main() {
 
     let transport = Transport::new(TransportConfig::new(
         "server",
-        &PrivateIdentity::new_from_rand(OsRng),
+        &PrivateIdentity::try_new_from_rand(OsRng).expect("os rng"),
         true,
     ));
 

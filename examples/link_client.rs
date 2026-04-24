@@ -29,7 +29,13 @@ async fn main() {
         .await;
 
     transport
-        .send_packet(in_destination.lock().await.announce(OsRng, None).unwrap())
+        .send_packet(
+            in_destination
+                .lock()
+                .await
+                .try_announce(OsRng, None)
+                .expect("announce"),
+        )
         .await;
 
     tokio::spawn(async move {

@@ -32,6 +32,8 @@ use alloc::collections::BTreeMap;
 use alloc::collections::VecDeque;
 #[cfg(feature = "alloc")]
 use alloc::vec::Vec;
+#[cfg(all(not(feature = "alloc"), feature = "heapless"))]
+use heapless::index_map::FnvIndexMap;
 
 // ──────────────────────────────────────────────────────────────────────────────
 // TxMessageEntry
@@ -350,7 +352,7 @@ pub struct RxRing<const N: usize = MAX_ENVELOPE_SIZE, const OOO: usize = 64> {
     #[cfg(feature = "alloc")]
     out_of_order: BTreeMap<u16, RxMessageEntry<N>>,
     #[cfg(all(not(feature = "alloc"), feature = "heapless"))]
-    out_of_order: heapless::FnvIndexMap<u16, RxMessageEntry<N>, OOO>,
+    out_of_order: FnvIndexMap<u16, RxMessageEntry<N>, OOO>,
 
     /// Next expected sequence number
     next_expected: SequenceNumber,
@@ -367,7 +369,7 @@ impl<const N: usize, const OOO: usize> RxRing<N, OOO> {
             #[cfg(feature = "alloc")]
             out_of_order: BTreeMap::new(),
             #[cfg(all(not(feature = "alloc"), feature = "heapless"))]
-            out_of_order: heapless::FnvIndexMap::new(),
+            out_of_order: FnvIndexMap::new(),
 
             next_expected: SequenceNumber::zero(),
 

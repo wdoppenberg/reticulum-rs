@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use ed25519_dalek::SigningKey;
 use getrandom::SysRng;
-use rand_core::UnwrapErr;
+use rand_core::TryRng;
 use x25519_dalek::StaticSecret;
 
 use reticulum_core::{
@@ -159,18 +159,18 @@ impl Link {
         destination: DestinationDesc,
         event_tx: tokio::sync::broadcast::Sender<LinkEventData>,
         data_tx: tokio::sync::broadcast::Sender<Arc<LinkDataEventData>>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, RnsError> {
+        Ok(Self {
             id: AddressHash::new_empty(),
             destination,
             state: LinkState::Pending {
-                priv_identity: PrivateIdentity::new_from_rand(UnwrapErr(SysRng)),
+                priv_identity: PrivateIdentity::try_new_from_rand(SysRng)?,
             },
             request_time: Instant::now(),
             rtt: Duration::from_secs(0),
             event_tx,
             data_tx,
-        }
+        })
     }
 
     pub fn new_from_request(
@@ -193,8 +193,12 @@ impl Link {
         let link_id = LinkId::from(packet);
         log::debug!("link: create from request {}", link_id);
 
+        let mut private_key_bytes = [0u8; PUBLIC_KEY_LENGTH];
+        SysRng
+            .try_fill_bytes(&mut private_key_bytes)
+            .map_err(|_| RnsError::Randomness)?;
         let priv_identity =
-            PrivateIdentity::new(StaticSecret::random_from_rng(&mut UnwrapErr(SysRng)), signing_key);
+            PrivateIdentity::new(StaticSecret::from(private_key_bytes), signing_key);
         let derived_key =
             priv_identity.derive_key(&peer_identity.public_key, Some(link_id.as_slice()));
 
@@ -241,7 +245,7 @@ impl Link {
         packet
     }
 
-    pub fn prove(&mut self) -> Packet {
+    pub fn prove(&mut self) -> Result<Packet, RnsError> {
         log::debug!("link({}): prove", self.id);
 
         self.post_event(LinkEvent::Activated);
@@ -257,13 +261,13 @@ impl Link {
         packet_data.safe_write(priv_identity.as_identity().public_key.as_bytes());
         packet_data.safe_write(priv_identity.as_identity().verifying_key.as_bytes());
 
-        let signature = priv_identity.sign(packet_data.as_slice());
+        let signature = priv_identity.sign(packet_data.as_slice())?;
 
         packet_data.reset();
         packet_data.safe_write(&signature.to_bytes()[..]);
         packet_data.safe_write(priv_identity.as_identity().public_key.as_bytes());
 
-        Packet {
+        Ok(Packet {
             header: Header {
                 packet_type: PacketType::Proof,
                 ..Default::default()
@@ -273,7 +277,7 @@ impl Link {
             transport: None,
             context: PacketContext::LinkRequestProof,
             data: packet_data,
-        }
+        })
     }
 
     /// Complete the DH key exchange for outgoing links (proof received from
@@ -284,7 +288,10 @@ impl Link {
             LinkState::Pending { priv_identity } => priv_identity,
             LinkState::Active { priv_identity, .. } => {
                 // Re-activation should not happen, but handle gracefully.
-                log::warn!("link({}): activate() called on already-active link", self.id);
+                log::warn!(
+                    "link({}): activate() called on already-active link",
+                    self.id
+                );
                 priv_identity
             }
             LinkState::Closed => {
@@ -292,7 +299,8 @@ impl Link {
                 return;
             }
         };
-        let derived_key = priv_identity.derive_key(&peer_identity.public_key, Some(self.id.as_slice()));
+        let derived_key =
+            priv_identity.derive_key(&peer_identity.public_key, Some(self.id.as_slice()));
         self.rtt = self.request_time.elapsed();
         self.state = LinkState::Active {
             priv_identity,
@@ -399,18 +407,19 @@ impl Link {
     /// Build a data packet, encrypting `data` with the link's derived key.
     /// Returns `Err(InvalidArgument)` if the link is not yet active.
     pub fn data_packet(&self, data: &[u8]) -> Result<Packet, RnsError> {
-        let LinkState::Active { priv_identity, derived_key, .. } = &self.state else {
+        let LinkState::Active {
+            priv_identity,
+            derived_key,
+            ..
+        } = &self.state
+        else {
             return Err(RnsError::InvalidArgument);
         };
 
         let mut packet_data = PacketDataBuffer::new();
         let cipher_text_len = {
-            let cipher_text = priv_identity.encrypt(
-                UnwrapErr(SysRng),
-                data,
-                derived_key,
-                packet_data.acquire_buf_max(),
-            )?;
+            let cipher_text =
+                priv_identity.encrypt(SysRng, data, derived_key, packet_data.acquire_buf_max())?;
             cipher_text.len()
         };
         packet_data.resize(cipher_text_len);
@@ -430,18 +439,19 @@ impl Link {
     }
 
     pub fn channel_packet(&self, data: &[u8]) -> Result<Packet, RnsError> {
-        let LinkState::Active { priv_identity, derived_key, .. } = &self.state else {
+        let LinkState::Active {
+            priv_identity,
+            derived_key,
+            ..
+        } = &self.state
+        else {
             return Err(RnsError::InvalidArgument);
         };
 
         let mut packet_data = PacketDataBuffer::new();
         let cipher_text_len = {
-            let cipher_text = priv_identity.encrypt(
-                UnwrapErr(SysRng),
-                data,
-                derived_key,
-                packet_data.acquire_buf_max(),
-            )?;
+            let cipher_text =
+                priv_identity.encrypt(SysRng, data, derived_key, packet_data.acquire_buf_max())?;
             cipher_text.len()
         };
         packet_data.resize(cipher_text_len);
@@ -461,18 +471,19 @@ impl Link {
     }
 
     pub fn resource_packet(&self, data: &[u8], context: PacketContext) -> Result<Packet, RnsError> {
-        let LinkState::Active { priv_identity, derived_key, .. } = &self.state else {
+        let LinkState::Active {
+            priv_identity,
+            derived_key,
+            ..
+        } = &self.state
+        else {
             return Err(RnsError::InvalidArgument);
         };
 
         let mut packet_data = PacketDataBuffer::new();
         let cipher_text_len = {
-            let cipher_text = priv_identity.encrypt(
-                UnwrapErr(SysRng),
-                data,
-                derived_key,
-                packet_data.acquire_buf_max(),
-            )?;
+            let cipher_text =
+                priv_identity.encrypt(SysRng, data, derived_key, packet_data.acquire_buf_max())?;
             cipher_text.len()
         };
         packet_data.resize(cipher_text_len);
@@ -512,17 +523,27 @@ impl Link {
     }
 
     pub fn encrypt<'a>(&self, text: &[u8], out_buf: &'a mut [u8]) -> Result<&'a [u8], RnsError> {
-        let LinkState::Active { priv_identity, derived_key, .. } = &self.state else {
+        let LinkState::Active {
+            priv_identity,
+            derived_key,
+            ..
+        } = &self.state
+        else {
             return Err(RnsError::InvalidArgument);
         };
-        priv_identity.encrypt(UnwrapErr(SysRng), text, derived_key, out_buf)
+        priv_identity.encrypt(SysRng, text, derived_key, out_buf)
     }
 
     pub fn decrypt<'a>(&self, text: &[u8], out_buf: &'a mut [u8]) -> Result<&'a [u8], RnsError> {
-        let LinkState::Active { priv_identity, derived_key, .. } = &self.state else {
+        let LinkState::Active {
+            priv_identity,
+            derived_key,
+            ..
+        } = &self.state
+        else {
             return Err(RnsError::InvalidArgument);
         };
-        priv_identity.decrypt(UnwrapErr(SysRng), text, derived_key, out_buf)
+        priv_identity.decrypt(SysRng, text, derived_key, out_buf)
     }
 
     pub fn destination(&self) -> &DestinationDesc {
@@ -530,7 +551,12 @@ impl Link {
     }
 
     pub fn create_rtt(&self) -> Result<Packet, RnsError> {
-        let LinkState::Active { priv_identity, derived_key, .. } = &self.state else {
+        let LinkState::Active {
+            priv_identity,
+            derived_key,
+            ..
+        } = &self.state
+        else {
             return Err(RnsError::InvalidArgument);
         };
 
@@ -541,7 +567,7 @@ impl Link {
         let mut packet_data = PacketDataBuffer::new();
         let token_len = {
             let token = priv_identity.encrypt(
-                UnwrapErr(SysRng),
+                SysRng,
                 buf.as_slice(),
                 derived_key,
                 packet_data.acquire_buf_max(),
@@ -605,7 +631,13 @@ impl Link {
             LinkState::Active { priv_identity, .. } | LinkState::Pending { priv_identity } => {
                 priv_identity
             }
-            LinkState::Closed => PrivateIdentity::new_from_rand(UnwrapErr(SysRng)),
+            LinkState::Closed => match PrivateIdentity::try_new_from_rand(SysRng) {
+                Ok(identity) => identity,
+                Err(_) => {
+                    log::error!("link({}): restart failed: RNG unavailable", self.id);
+                    return;
+                }
+            },
         };
         self.state = LinkState::Pending { priv_identity };
     }
@@ -632,21 +664,18 @@ impl Link {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use reticulum_core::identity::PrivateIdentity;
     use reticulum_core::destination::DestinationName;
     use reticulum_core::destination::SingleInputDestination;
     use reticulum_core::hash::AddressHash;
+    use reticulum_core::identity::PrivateIdentity;
     use tokio::sync::broadcast;
 
     fn make_link() -> Link {
         let (event_tx, _) = broadcast::channel(4);
         let (data_tx, _) = broadcast::channel(4);
-        let identity = PrivateIdentity::new_from_rand(UnwrapErr(SysRng));
-        let dest = SingleInputDestination::new(
-            identity,
-            DestinationName::new("test", "link"),
-        );
-        Link::new(dest.desc, event_tx, data_tx)
+        let identity = PrivateIdentity::try_new_from_rand(SysRng).expect("system RNG");
+        let dest = SingleInputDestination::new(identity, DestinationName::new("test", "link"));
+        Link::new(dest.desc, event_tx, data_tx).expect("link")
     }
 
     #[test]
@@ -696,12 +725,10 @@ mod tests {
         let (data_tx, _) = broadcast::channel(4);
 
         // Build a fake link-request packet (two x25519 public keys).
-        let requester_id = PrivateIdentity::new_from_rand(UnwrapErr(SysRng));
-        let responder_id = PrivateIdentity::new_from_rand(UnwrapErr(SysRng));
-        let responder_dest = SingleInputDestination::new(
-            responder_id,
-            DestinationName::new("test", "link"),
-        );
+        let requester_id = PrivateIdentity::try_new_from_rand(SysRng).expect("system RNG");
+        let responder_id = PrivateIdentity::try_new_from_rand(SysRng).expect("system RNG");
+        let responder_dest =
+            SingleInputDestination::new(responder_id, DestinationName::new("test", "link"));
 
         // Build a packet that looks like a link request.
         let mut packet_data = PacketDataBuffer::new();
@@ -721,14 +748,9 @@ mod tests {
         };
 
         let signing_key = responder_dest.sign_key().clone();
-        let link = Link::new_from_request(
-            &packet,
-            signing_key,
-            responder_dest.desc,
-            event_tx,
-            data_tx,
-        )
-        .expect("new_from_request");
+        let link =
+            Link::new_from_request(&packet, signing_key, responder_dest.desc, event_tx, data_tx)
+                .expect("new_from_request");
 
         assert_eq!(link.status(), LinkStatus::Active);
     }

@@ -55,4 +55,6 @@ pub mod node;
 pub use cmd::{ChatCmd, TextMessage};
 pub use error::ChatError;
 pub use message::ChatMessage;
-pub use node::{start, ChatEvent, ChatHandle, Connected, Disconnected, PeerHandle, APP_ASPECTS, APP_NAME};
+pub use node::{
+    start, ChatEvent, ChatHandle, Connected, Disconnected, PeerHandle, APP_ASPECTS, APP_NAME,
+};

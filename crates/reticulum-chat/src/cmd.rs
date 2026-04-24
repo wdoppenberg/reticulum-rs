@@ -114,13 +114,11 @@ impl ChatCmd for TextMessage {
 mod tests {
     use super::*;
     use getrandom::SysRng;
-
-    use rand_core::UnwrapErr;
     use reticulum_core::hash::AddressHash;
 
     #[test]
     fn text_message_round_trips() {
-        let sender = AddressHash::new_from_rand(UnwrapErr(SysRng));
+        let sender = AddressHash::try_new_from_rand(SysRng).expect("system RNG");
         let msg = TextMessage::new(sender, "hello, world");
         let encoded = msg.encode();
         let decoded = TextMessage::decode(&encoded).expect("decode");
@@ -141,7 +139,7 @@ mod tests {
 
     #[test]
     fn decode_invalid_utf8_returns_none() {
-        let sender = AddressHash::new_from_rand(UnwrapErr(SysRng));
+        let sender = AddressHash::try_new_from_rand(SysRng).expect("system RNG");
         let mut buf = Vec::new();
         buf.extend_from_slice(sender.as_slice()); // 16 bytes
         buf.extend_from_slice(&42u64.to_le_bytes()); // 8 bytes
@@ -156,7 +154,7 @@ mod tests {
 
     #[test]
     fn empty_content_round_trips() {
-        let sender = AddressHash::new_from_rand(UnwrapErr(SysRng));
+        let sender = AddressHash::try_new_from_rand(SysRng).expect("system RNG");
         let msg = TextMessage::new(sender, "");
         let decoded = TextMessage::decode(&msg.encode()).expect("decode");
         assert_eq!(decoded.content, "");

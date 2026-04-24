@@ -1,7 +1,7 @@
 // Link management moved to reticulum-tokio
 
 use ed25519_dalek::{Signature, SigningKey, VerifyingKey, SIGNATURE_LENGTH};
-use rand_core::CryptoRng;
+use rand_core::{CryptoRng, TryCryptoRng};
 use x25519_dalek::PublicKey;
 
 use core::{fmt, marker::PhantomData};
@@ -249,15 +249,14 @@ impl Destination<PrivateIdentity, Input, Single> {
         }
     }
 
-    // TODO: Replace CryptoRng with TryCryptoRng
-    pub fn announce<R: CryptoRng + Copy>(
+    pub fn try_announce<R: TryCryptoRng + Copy>(
         &self,
         rng: R,
         app_data: Option<&[u8]>,
     ) -> Result<Packet, RnsError> {
         let mut packet_data = PacketDataBuffer::new();
 
-        let rand_hash = Hash::new_from_rand(rng);
+        let rand_hash = Hash::try_new_from_rand(rng)?;
         let rand_hash = &rand_hash.as_slice()[..RAND_HASH_LENGTH];
 
         let pub_key = self.identity.as_identity().public_key_bytes();
@@ -274,7 +273,7 @@ impl Destination<PrivateIdentity, Input, Single> {
             packet_data.write(data)?;
         }
 
-        let signature = self.identity.sign(packet_data.as_slice());
+        let signature = self.identity.sign(packet_data.as_slice())?;
 
         packet_data.reset();
 
@@ -306,15 +305,31 @@ impl Destination<PrivateIdentity, Input, Single> {
         })
     }
 
+    pub fn announce<R: CryptoRng + Copy>(
+        &self,
+        rng: R,
+        app_data: Option<&[u8]>,
+    ) -> Result<Packet, RnsError> {
+        self.try_announce(rng, app_data)
+    }
+
+    pub fn try_path_response<R: TryCryptoRng + Copy>(
+        &self,
+        rng: R,
+        app_data: Option<&[u8]>,
+    ) -> Result<Packet, RnsError> {
+        let mut announce = self.try_announce(rng, app_data)?;
+        announce.context = PacketContext::PathResponse;
+
+        Ok(announce)
+    }
+
     pub fn path_response<R: CryptoRng + Copy>(
         &self,
         rng: R,
         app_data: Option<&[u8]>,
     ) -> Result<Packet, RnsError> {
-        let mut announce = self.announce(rng, app_data)?;
-        announce.context = PacketContext::PathResponse;
-
-        Ok(announce)
+        self.try_path_response(rng, app_data)
     }
 
     pub fn handle_packet(&mut self, packet: &Packet) -> DestinationHandleStatus {
@@ -388,8 +403,6 @@ mod tests {
     use std::println;
 
     use getrandom::SysRng;
-    // TODO: Do not use UnwrapE
-    use rand_core::UnwrapErr;
 
     use crate::buffer::OutputBuffer;
     use crate::hash::Hash;
@@ -402,13 +415,13 @@ mod tests {
 
     #[test]
     fn create_announce() {
-        let identity = PrivateIdentity::new_from_rand(UnwrapErr(SysRng));
+        let identity = PrivateIdentity::try_new_from_rand(SysRng).expect("system RNG");
 
         let single_in_destination =
             SingleInputDestination::new(identity, DestinationName::new("test", "in"));
 
         let announce_packet = single_in_destination
-            .announce(UnwrapErr(SysRng), None)
+            .try_announce(SysRng, None)
             .expect("valid announce packet");
 
         println!("Announce packet {}", announce_packet);
@@ -452,7 +465,7 @@ mod tests {
         println!("destination hash {}", destination.desc.address_hash);
 
         let announce = destination
-            .announce(UnwrapErr(SysRng), None)
+            .try_announce(SysRng, None)
             .expect("valid announce packet");
 
         let mut output_data = [0u8; 4096];
@@ -465,7 +478,7 @@ mod tests {
 
     #[test]
     fn check_announce() {
-        let priv_identity = PrivateIdentity::new_from_rand(UnwrapErr(SysRng));
+        let priv_identity = PrivateIdentity::try_new_from_rand(SysRng).expect("system RNG");
 
         let destination = SingleInputDestination::new(
             priv_identity,
@@ -473,7 +486,7 @@ mod tests {
         );
 
         let announce = destination
-            .announce(UnwrapErr(SysRng), None)
+            .try_announce(SysRng, None)
             .expect("valid announce packet");
 
         let _ = DestinationAnnounce::validate(&announce).expect("valid announce");

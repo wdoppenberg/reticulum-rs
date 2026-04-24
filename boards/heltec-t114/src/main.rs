@@ -45,30 +45,61 @@
 mod ui;
 
 use defmt_rtt as _;
+
 use panic_probe as _;
 
+extern crate alloc;
+
+use core::mem::MaybeUninit;
+
+use embassy_embedded_hal::shared_bus::asynch::spi::SpiDevice;
+
 use embassy_executor::Spawner;
+
 use embassy_nrf::gpio::{Input, Level, Output, OutputDrive, Pull};
+
+use embassy_nrf::mode::Blocking;
+
 use embassy_nrf::nvmc::Nvmc;
+
 use embassy_nrf::rng::Rng;
+
 use embassy_nrf::spim::{self, Spim};
+
 use embassy_nrf::{bind_interrupts, peripherals};
+
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+
 use embassy_sync::channel::Channel;
+
+use embassy_sync::mutex::Mutex;
+
 use embassy_time::Delay;
 
+use embedded_alloc::LlffHeap as Heap;
+
 use lora_phy::iv::GenericSx126xInterfaceVariant;
-use lora_phy::sx126x::{Config as Sx126xConfig, Sx126x, Sx126xVariant};
+
+use lora_phy::sx126x::{Config as Sx126xConfig, Sx1262, Sx126x};
+
 use lora_phy::LoRa;
 
+use rand_core::{Infallible, TryCryptoRng, TryRng};
+
+use static_cell::StaticCell;
+
 use reticulum_core::hash::{AddressHash, Hash};
+
 use reticulum_core::routing::{RxMessage, TxMessage};
 
 use reticulum_embassy::iface::{drive_interface, InterfaceRouter};
 
-use reticulum_node::config::{LoraConfig, NodeConfig};
+use reticulum_node::config::{LoraConfig, RouterConfig};
+
 use reticulum_node::lora::LoraInterface;
+
 use reticulum_node::node::run;
+
 use reticulum_node::storage::load_or_generate;
 
 // ── Flash layout ──────────────────────────────────────────────────────────────
@@ -77,40 +108,69 @@ use reticulum_node::storage::load_or_generate;
 /// (page size = 4 KB on nRF52840, so last page starts at 0xFF000).
 ///
 /// Adjust if your linker script allocates flash differently.
-const IDENTITY_FLASH_OFFSET: u32 = 0x000F_F000;
+
+/// Last 4 KB of the firmware flash region (0x26000 + 820K = 0xF3000).
+/// Must stay within FLASH in memory.x and away from the bootloader settings page at 0xFF000.
+const IDENTITY_FLASH_OFFSET: u32 = 0x000F_3000;
 
 // ── Pin assignments ───────────────────────────────────────────────────────────
 
 type SpiPeripheral = peripherals::SPI3;
-type PinNss = peripherals::P0_24;
-type PinReset = peripherals::P0_25;
-type PinBusy = peripherals::P0_17;
-type PinDio1 = peripherals::P0_20;
-type PinAntRx = peripherals::P0_13;
-type PinAntTx = peripherals::P0_14;
 
 // ── Channel capacities ────────────────────────────────────────────────────────
 
 const RX_CAP: usize = 2;
+
 const TX_CAP: usize = 2;
 
 // ── Static channels ───────────────────────────────────────────────────────────
 
 static RX: Channel<CriticalSectionRawMutex, RxMessage, RX_CAP> = Channel::new();
+
 static TX_LORA: Channel<CriticalSectionRawMutex, TxMessage, TX_CAP> = Channel::new();
+
+static SPI_BUS: StaticCell<Mutex<CriticalSectionRawMutex, Spim<'static>>> = StaticCell::new();
+
+#[global_allocator]
+static HEAP: Heap = Heap::empty();
+
+const HEAP_SIZE: usize = 8192;
+
+static mut HEAP_MEM: [MaybeUninit<u8>; HEAP_SIZE] = [MaybeUninit::uninit(); HEAP_SIZE];
 
 // ── Interrupt binding ─────────────────────────────────────────────────────────
 
 bind_interrupts!(struct Irqs {
     SPIM3 => spim::InterruptHandler<SpiPeripheral>;
-    RNG   => embassy_nrf::rng::InterruptHandler<peripherals::RNG>;
 });
 
 // ── Type aliases ──────────────────────────────────────────────────────────────
 
-type Iv<'d> = GenericSx126xInterfaceVariant<Output<'d, PinReset>, Input<'d, PinDio1>>;
+type Iv<'d> = GenericSx126xInterfaceVariant<Output<'d>, Input<'d>>;
 
-type Radio<'d> = Sx126x<Spim<'d, SpiPeripheral>, Output<'d, PinNss>, Iv<'d>, Sx126xVariant>;
+type Radio<'d> =
+    Sx126x<SpiDevice<'d, CriticalSectionRawMutex, Spim<'static>, Output<'static>>, Iv<'d>, Sx1262>;
+
+struct NrfRngAdapter<'a, 'd>(&'a mut Rng<'d, Blocking>);
+
+impl TryRng for NrfRngAdapter<'_, '_> {
+    type Error = Infallible;
+
+    fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
+        Ok(self.0.blocking_next_u32())
+    }
+
+    fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
+        Ok(self.0.blocking_next_u64())
+    }
+
+    fn try_fill_bytes(&mut self, dst: &mut [u8]) -> Result<(), Self::Error> {
+        self.0.blocking_fill_bytes(dst);
+        Ok(())
+    }
+}
+
+impl TryCryptoRng for NrfRngAdapter<'_, '_> {}
 
 // ── Embassy tasks ─────────────────────────────────────────────────────────────
 
@@ -125,15 +185,23 @@ async fn lora_task(iface: LoraInterface<Radio<'static>, Delay>, addr: AddressHas
 async fn main(spawner: Spawner) {
     defmt::info!("reticulum-node starting on nRF52840 / Heltec T114");
 
+    unsafe {
+        HEAP.init(
+            core::ptr::addr_of_mut!(HEAP_MEM) as *mut u8 as usize,
+            HEAP_SIZE,
+        );
+    }
+
     let p = embassy_nrf::init(Default::default());
 
     // ── Hardware RNG ──────────────────────────────────────────────────────────
-    let mut rng = Rng::new(p.RNG, Irqs);
+    let mut rng = Rng::new_blocking(p.RNG);
 
     // ── Identity (load from flash or generate and persist) ────────────────────
     let mut nvmc = Nvmc::new(p.NVMC);
-    let identity =
-        load_or_generate(&mut nvmc, IDENTITY_FLASH_OFFSET, &mut rng).expect("identity init");
+    let mut rng_adapter = NrfRngAdapter(&mut rng);
+    let identity = load_or_generate(&mut nvmc, IDENTITY_FLASH_OFFSET, &mut rng_adapter)
+        .expect("identity init");
     let node_addr = *identity.address_hash();
     defmt::info!("node address: {:?}", defmt::Debug2Format(&node_addr));
 
@@ -159,15 +227,18 @@ async fn main(spawner: Spawner) {
     let iv = GenericSx126xInterfaceVariant::new(reset, dio1, busy, Some(ant_rx), Some(ant_tx))
         .expect("IV init");
 
+    let spi_bus = SPI_BUS.init(Mutex::new(spi));
+    let spi_device = SpiDevice::new(spi_bus, nss);
+
     // ── SX1262 radio ──────────────────────────────────────────────────────────
     let sx126x_config = Sx126xConfig {
-        chip: Sx126xVariant::Sx1262,
+        chip: Sx1262,
         tcxo_ctrl: Some(lora_phy::sx126x::TcxoCtrlVoltage::Ctrl1V7),
         use_dcdc: true,
         rx_boost: false,
     };
 
-    let radio = Sx126x::new(spi, nss, iv, sx126x_config);
+    let radio = Sx126x::new(spi_device, iv, sx126x_config);
 
     let lora = LoRa::new(radio, true, Delay).await.expect("LoRa init");
 
@@ -186,9 +257,9 @@ async fn main(spawner: Spawner) {
         .expect("register LoRa interface");
 
     // ── Spawn interface driver ────────────────────────────────────────────────
-    spawner.must_spawn(lora_task(lora_iface, lora_addr));
+    spawner.spawn(lora_task(lora_iface, lora_addr).expect("Unable to spawn LoRA task."));
 
     // ── Run the forwarding loop ───────────────────────────────────────────────
-    let node_config = NodeConfig::embedded();
+    let node_config = RouterConfig::embedded();
     run::<64, 32, 1>(node_config, node_addr, iface_router, RX.receiver().into()).await;
 }

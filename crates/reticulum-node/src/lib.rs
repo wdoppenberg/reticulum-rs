@@ -11,20 +11,20 @@
 //! | `embassy`         | Async node runner, Embassy sync + time primitives    |
 //! | `lora`            | [`LoraInterface`] wrapping lora-phy SX126x driver    |
 //! | `storage`         | Identity persistence helpers (embedded-storage)      |
-//! | `ui`       | Generic ratatui + mousefood status UI primitives     |
+//! | `ui`              | Generic ratatui + mousefood status UI primitives     |
 //!
 //! # Crate layout
 //!
 //! | Module        | Contents                                             |
 //! |---------------|------------------------------------------------------|
-//! | [`config`]    | [`NodeConfig`], [`LoraConfig`], regional presets     |
+//! | [`config`]    | [`RouterConfig`], [`LoraConfig`], regional presets   |
 //! | [`router`]    | no_std [`Router`] with dedup, hop-counting, paths    |
 //! | [`storage`]   | Identity persistence over NOR flash (feature `storage`) |
 //! | [`lora`]      | [`LoraInterface`] (feature `lora`)                   |
 //! | [`node`]      | [`run()`] async Embassy runner (feature `embassy`)   |
-//! | [`ui`] | Generic node status UI primitives (feature `ui`) |
+//! | [`ui`]        | Generic node status UI primitives (feature `ui`)     |
 //!
-//! [`NodeConfig`]: config::NodeConfig
+//! [`RouterConfig`]: config::RouterConfig
 //! [`LoraConfig`]: config::LoraConfig
 //! [`Router`]: router::Router
 //! [`LoraInterface`]: lora::LoraInterface

@@ -17,14 +17,17 @@ async fn main() {
     let client = TcpClient::connect("127.0.0.1:4242").await.expect("tcp connect");
     let client_addr = transport.iface_manager().lock().await.spawn_interface(client);
 
-    let id = PrivateIdentity::new_from_rand(OsRng);
+    let id = PrivateIdentity::try_new_from_rand(OsRng).expect("os rng");
 
     let destination = SingleInputDestination::new(id, DestinationName::new("example", "app"));
 
     tokio::time::sleep(Duration::from_secs(3)).await;
 
     transport
-        .send_direct(client_addr, destination.announce(OsRng, None).unwrap())
+        .send_direct(
+            client_addr,
+            destination.try_announce(OsRng, None).expect("announce"),
+        )
         .await;
 
     let _ = tokio::signal::ctrl_c().await;
