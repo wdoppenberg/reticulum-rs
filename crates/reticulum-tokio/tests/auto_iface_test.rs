@@ -104,8 +104,6 @@ fn discovery_token_matches_python_formula() {
 async fn two_nodes_discover_each_other() {
     use reticulum_core::packet::Packet;
     use reticulum_tokio::iface::{InterfaceManager, TxMessage, TxMessageType};
-    use std::sync::Arc;
-    use tokio::sync::Mutex;
 
     // Use non-default ports to avoid colliding with a running RNS instance.
     const DISC_PORT: u16 = 29816;
@@ -134,7 +132,7 @@ async fn two_nodes_discover_each_other() {
     tokio::time::sleep(Duration::from_secs(7)).await;
 
     // Send a packet from A; B should receive it.
-    let pkt = Packet::default();
+    let pkt = Packet::new_empty();
     mgr_a.send(TxMessage {
         tx_type: TxMessageType::Broadcast(None),
         packet: pkt,
@@ -161,7 +159,6 @@ async fn two_nodes_discover_each_other() {
 /// that we compute the same hashes.
 #[test]
 fn destination_hash_matches_python_vector() {
-    use reticulum_core::identity::Identity;
     use sha2::{Digest, Sha256};
     use std::path::Path;
 

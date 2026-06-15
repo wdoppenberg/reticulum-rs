@@ -1,3 +1,5 @@
+[workspace]
+
 [package]
 name = "heltec-t114"
 version = "0.1.0"
@@ -21,16 +23,27 @@ reticulum-core    = { path = "../../crates/reticulum-core",    default-features 
 reticulum-embassy = { path = "../../crates/reticulum-embassy", default-features = false }
 
 # ── Embassy runtime ────────────────────────────────────────────────────────────
-embassy-executor = { version = "0.10", default-features = false, features = ["platform-cortex-m", "executor-thread"] }
-embassy-sync     = { version = "0.8", default-features = false }
-embassy-time     = { version = "0.5", default-features = false }
-embassy-embedded-hal = { version = "0.6", default-features = false }
-static_cell = { version = "2", default-features = false }
-embedded-alloc = "0.6"
-rand_core = { version = "0.10", default-features = false }
+embassy-executor     = { version = "0.10", default-features = false, features = ["platform-cortex-m", "executor-thread"] }
+embassy-sync         = { version = "0.8",  default-features = false }
+embassy-time         = { version = "0.5",  default-features = false }
+embassy-embedded-hal = { version = "0.6",  default-features = false }
+embassy-futures      = { version = "0.1",  default-features = false }
+static_cell          = { version = "2",    default-features = false }
+embedded-alloc       = "0.6"
+rand_core            = { version = "0.10", default-features = false }
+heapless             = { version = "0.9",  default-features = false }
 
 # ── LoRa radio driver ──────────────────────────────────────────────────────────
 lora-phy = { version = "3.0.1", default-features = false }
+
+# ── BLE stack (trouble-host + Nordic SDC, no SoftDevice binary needed) ─────────
+# nrf-sdc 0.3 targets embassy 0.7; use git main which tracks embassy 0.10+.
+trouble-host = { git = "https://github.com/embassy-rs/trouble", default-features = false, features = ["gatt", "peripheral", "derive", "default-packet-pool"] }
+nrf-sdc      = { git = "https://github.com/alexmoon/nrf-sdc", default-features = false, features = ["nrf52840", "peripheral"] }
+nrf-mpsl     = { git = "https://github.com/alexmoon/nrf-sdc", default-features = false, features = ["nrf52840"] }
+
+# rand_core 0.9 shim — nrf-sdc requires CryptoRng from the 0.9 lineage.
+rand_core09 = { package = "rand_core", version = "0.9", default-features = false }
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 log       = { version = "0.4",  default-features = false }
@@ -46,5 +59,9 @@ embassy-nrf = { version = "0.10", default-features = false, features = [
     "unstable-pac",
     "defmt",
 ] }
+# Note: critical-section-single-core disables all interrupts in critical sections,
+# including MPSL's high-priority radio interrupt.  For production BLE this should be
+# replaced with MPSL's own critical-section implementation; single-core is kept here
+# for initial bring-up convenience.
 cortex-m    = { version = "0.7", features = ["critical-section-single-core"] }
 cortex-m-rt = { version = "0.7" }

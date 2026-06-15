@@ -160,8 +160,13 @@ impl Identity {
     }
 }
 
-impl Default for Identity {
-    fn default() -> Self {
+impl Identity {
+    /// Construct an `Identity` with all-zero key material.
+    ///
+    /// Intended only as an inert placeholder for tests and ring-buffer slots.
+    /// A zero-key identity is cryptographically meaningless — never use one
+    /// to authenticate, sign, or derive keys in production code paths.
+    pub fn new_empty() -> Self {
         let empty_key = [0u8; PUBLIC_KEY_LENGTH];
         Self::new(PublicKey::from(empty_key), VerifyingKey::default())
     }

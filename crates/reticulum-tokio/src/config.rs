@@ -355,14 +355,15 @@ impl Config {
         // Validate interface configurations
         for (name, iface) in &self.interfaces {
             match iface {
-                InterfaceConfig::Tcp(tcp) => {
-                    if tcp.mode != "server" && tcp.mode != "client" {
-                        return Err(ConfigError::Validation(format!(
-                            "TCP interface '{}': mode must be 'server' or 'client'",
-                            name
-                        )));
-                    }
+                InterfaceConfig::Tcp(tcp)
+                    if tcp.mode != "server" && tcp.mode != "client" =>
+                {
+                    return Err(ConfigError::Validation(format!(
+                        "TCP interface '{}': mode must be 'server' or 'client'",
+                        name
+                    )));
                 }
+                InterfaceConfig::Tcp(_) => {}
                 InterfaceConfig::Serial(serial) => {
                     if serial.data_bits < 5 || serial.data_bits > 8 {
                         return Err(ConfigError::Validation(format!(

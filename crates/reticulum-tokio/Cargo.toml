@@ -16,8 +16,16 @@ Provides transport layer, interface management, and routing for network nodes.
 # Core protocol implementation
 reticulum-core = { path = "../reticulum-core", version = "0.1.0" }
 
-# Async runtime
-tokio = { version = "1.52.1", features = ["full"] }
+# Async runtime — explicit feature set rather than "full" to avoid pulling in
+# process/fs/signal machinery the transport doesn't use.
+tokio = { version = "1.52.1", features = [
+    "rt-multi-thread",
+    "macros",
+    "sync",
+    "time",
+    "net",
+    "io-util",
+] }
 tokio-stream = "0.1.18"
 tokio-util = "0.7.18"
 

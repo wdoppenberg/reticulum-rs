@@ -32,16 +32,19 @@
 //!
 //! # Memory budget (important for embedded targets)
 //!
-//! [`Packet`] internally holds a `StaticBuffer<2048>` for payload data, making
-//! each [`RxMessage`] / [`TxMessage`] roughly **2.1 KB** on the stack or in a
-//! channel slot.  On an nRF52840 (256 KB RAM), a channel with capacity `N`
-//! costs `N × 2.1 KB`.  Keep capacities small:
+//! [`Packet`] internally holds a `StaticBuffer<PACKET_MDU>` (currently 512
+//! bytes, sized to fit one [`RETICULUM_MTU`]-bounded wire frame), making each
+//! [`RxMessage`] / [`TxMessage`] roughly **0.55 KB** on the stack or in a
+//! channel slot.  On an nRF52840 (256 KB RAM) channel capacities up to 16
+//! are comfortable:
 //!
 //! | Cap | Channel RAM |
 //! |-----|-------------|
-//! |   2 |   ~4.2 KB  |
-//! |   4 |   ~8.4 KB  |
-//! |   8 |  ~16.8 KB  |
+//! |   4 |   ~2.2 KB  |
+//! |   8 |   ~4.4 KB  |
+//! |  16 |   ~8.8 KB  |
+//!
+//! [`RETICULUM_MTU`]: reticulum_core::packet::RETICULUM_MTU
 //!
 //! For LoRa (MTU 255 B) the actual data is always far smaller, but the
 //! `Packet` struct is fixed-size regardless.
@@ -237,6 +240,7 @@ impl<'a, const N: usize> InterfaceRouter<'a, N> {
     ///
     /// Returns `Err(())` if the router is already full (`N` interfaces
     /// registered).  The sender is dropped in the error case.
+    #[allow(clippy::result_unit_err)]
     pub fn register(
         &mut self,
         address: AddressHash,
@@ -315,7 +319,7 @@ mod tests {
     }
 
     fn make_packet() -> Packet {
-        Packet::default()
+        Packet::new_empty()
     }
 
     fn make_tx(tx_type: TxMessageType) -> TxMessage {

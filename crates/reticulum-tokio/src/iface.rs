@@ -271,10 +271,10 @@ impl InterfaceManager {
                 TxMessageType::Direct(address) => address == iface.address,
             };
 
-            if should_send && !iface.stop.is_cancelled() {
-                if iface.tx_send.try_send(message).is_err() {
-                    log::warn!("iface {}: TX queue full, dropping packet", iface.address);
-                }
+            if should_send && !iface.stop.is_cancelled()
+                && iface.tx_send.try_send(message).is_err()
+            {
+                log::warn!("iface {}: TX queue full, dropping packet", iface.address);
             }
         }
     }

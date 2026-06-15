@@ -374,7 +374,7 @@ impl<D: Direction> Destination<EmptyIdentity, D, Plain> {
             r#type: PhantomData,
             identity,
             desc: DestinationDesc {
-                identity: Default::default(),
+                identity: Identity::new_empty(),
                 name,
                 address_hash,
             },

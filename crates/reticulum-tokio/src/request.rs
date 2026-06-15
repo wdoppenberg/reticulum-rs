@@ -299,7 +299,7 @@ impl Default for RequestHandlerRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use reticulum_core::hash::AddressHash;
+
     use reticulum_core::identity::Identity;
 
     #[tokio::test]
@@ -383,7 +383,7 @@ mod tests {
             None,
             RequestId::from_path("/test"),
             LinkId::new_empty(),
-            Identity::default(),
+            Identity::new_empty(),
             0,
         );
 

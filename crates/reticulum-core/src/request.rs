@@ -327,7 +327,7 @@ mod tests {
         let data = Some(b"request data".to_vec());
         let request_id = RequestId::from_path(path);
         let link_id = LinkId::new_empty();
-        let remote_identity = Identity::default();
+        let remote_identity = Identity::new_empty();
 
         let context = RequestContext::new(
             path,

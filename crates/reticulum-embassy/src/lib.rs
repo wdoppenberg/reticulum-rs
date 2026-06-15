@@ -40,9 +40,10 @@
 //!
 //! # Memory budget
 //!
-//! [`reticulum_core::packet::Packet`] contains a `StaticBuffer<2048>`, making
-//! each channel message roughly **2.1 KB**.  On an nRF52840 (256 KB RAM)
-//! prefer channel capacities of 2–4.  See [`iface`] for the full table.
+//! [`reticulum_core::packet::Packet`] contains a `StaticBuffer<PACKET_MDU>`
+//! (currently 512 bytes), making each channel message roughly **0.55 KB**.
+//! On an nRF52840 (256 KB RAM) channel capacities of 4–8 are comfortable.
+//! See [`iface`] for the full table.
 //!
 //! # Heltec T114 / nRF52840 checklist
 //!

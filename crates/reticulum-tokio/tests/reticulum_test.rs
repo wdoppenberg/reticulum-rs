@@ -68,7 +68,7 @@ port = 9181
     tokio::time::sleep(Duration::from_millis(300)).await;
 
     // Send a packet from A — the transport broadcasts it to all interfaces.
-    transport_a.send_packet(Packet::default()).await;
+    transport_a.send_packet(Packet::new_empty()).await;
 
     // B should receive the frame within a generous timeout.
     let result = tokio::time::timeout(Duration::from_secs(3), rx_b.recv()).await;

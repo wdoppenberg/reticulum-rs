@@ -14,7 +14,7 @@
 //!
 //! #[tokio::main]
 //! async fn main() {
-//!     let identity = PrivateIdentity::new_from_rand(rand_core::OsRng);
+//!     let identity = PrivateIdentity::try_new_from_rand(getrandom::SysRng).expect("system RNG");
 //!     let node_address = *identity.address_hash();
 //!     let transport = Arc::new(Transport::new(TransportConfig::new(
 //!         "chat", node_address, true,

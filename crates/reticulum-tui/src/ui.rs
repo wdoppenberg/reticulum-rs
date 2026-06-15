@@ -545,30 +545,28 @@ pub fn draw_wizard(
 ) {
     let area = f.area();
 
-    let mut lines: Vec<Line> = Vec::new();
-
-    lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(
-        " Welcome to reticulum-tui!",
-        Style::default()
-            .fg(Color::White)
-            .add_modifier(Modifier::BOLD),
-    )));
-    lines.push(Line::from(""));
-
-    lines.push(Line::from(vec![
-        Span::styled(" Config: ", Style::default().fg(Color::DarkGray)),
-        Span::styled(
-            config_path.display().to_string(),
-            Style::default().fg(Color::White),
-        ),
-    ]));
-    lines.push(Line::from(""));
-
-    lines.push(Line::from(Span::styled(
-        " Issues detected:",
-        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-    )));
+    let mut lines: Vec<Line> = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            " Welcome to reticulum-tui!",
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(" Config: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                config_path.display().to_string(),
+                Style::default().fg(Color::White),
+            ),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled(
+            " Issues detected:",
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        )),
+    ];
     for issue in issues {
         lines.push(Line::from(vec![
             Span::styled("   ✗ ", Style::default().fg(Color::Red)),

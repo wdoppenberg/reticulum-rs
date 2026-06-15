@@ -1,21 +1,14 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use ed25519_dalek::SigningKey;
 use getrandom::SysRng;
-use rand_core::TryRng;
-use x25519_dalek::StaticSecret;
 
 use reticulum_core::{
     destination::DestinationDesc,
     error::RnsError,
     hash::AddressHash,
-    identity::{
-        DecryptIdentity, DerivedKey, EncryptIdentity, Identity, PrivateIdentity, PUBLIC_KEY_LENGTH,
-    },
-    packet::{
-        DestinationType, Header, Packet, PacketContext, PacketDataBuffer, PacketType, PACKET_MDU,
-    },
+    link::{LinkCore, LinkOutcome},
+    packet::{Packet, PacketContext, PacketDataBuffer},
 };
 
 // Re-export core link types so downstream crates only need to import from `crate::link`.
@@ -44,58 +37,6 @@ pub struct LinkDataEventData {
     pub id: LinkId,
     pub address_hash: AddressHash,
     pub frame: LinkDataFrame,
-}
-
-// ─── Link state machine ───────────────────────────────────────────────────────
-
-/// Internal state of a [`Link`].
-///
-/// Replaces the previous `established: Option<EstablishedLink>` + redundant
-/// `status: LinkStatus` pair with a single source of truth.  Moving between
-/// variants is the only way to change the link's cryptographic state.
-///
-/// `PrivateIdentity` is intentionally **not** `Clone` (key material must not
-/// be silently duplicated), so transitions use [`std::mem::replace`] to move
-/// the key out of the old variant and into the new one.
-///
-/// The enum lives inside `Arc<Mutex<Link>>`, so the stack-size difference
-/// between variants is not observable to callers.
-#[allow(clippy::large_enum_variant)]
-enum LinkState {
-    /// DH exchange not yet complete; proof not yet received.
-    Pending { priv_identity: PrivateIdentity },
-
-    /// Proof validated; shared key material is available for encryption.
-    Active {
-        priv_identity: PrivateIdentity,
-        /// The remote peer's public identity (carried here so callers can read
-        /// it without a separate look-up).
-        #[allow(dead_code)]
-        peer_identity: Identity,
-        derived_key: DerivedKey,
-    },
-
-    /// Link has been closed; no further crypto operations are valid.
-    Closed,
-}
-
-impl LinkState {
-    fn status(&self) -> LinkStatus {
-        match self {
-            LinkState::Pending { .. } => LinkStatus::Pending,
-            LinkState::Active { .. } => LinkStatus::Active,
-            LinkState::Closed => LinkStatus::Closed,
-        }
-    }
-
-    fn priv_identity(&self) -> Option<&PrivateIdentity> {
-        match self {
-            LinkState::Pending { priv_identity } | LinkState::Active { priv_identity, .. } => {
-                Some(priv_identity)
-            }
-            LinkState::Closed => None,
-        }
-    }
 }
 
 // ─── ActiveLink capability token ─────────────────────────────────────────────
@@ -142,12 +83,10 @@ impl ActiveLink {
 // ─── Link ─────────────────────────────────────────────────────────────────────
 
 pub struct Link {
-    id: LinkId,
-    destination: DestinationDesc,
-    /// Single source of truth for the link's cryptographic lifecycle.
-    state: LinkState,
+    /// Protocol state machine: handshake, encryption, packet construction.
+    core: LinkCore,
+    /// Tracks last activity time for both RTT measurement and staleness detection.
     request_time: Instant,
-    rtt: Duration,
     /// Control-plane sender: Activated / Closed.
     event_tx: tokio::sync::broadcast::Sender<LinkEventData>,
     /// Data-plane sender: Arc-wrapped so broadcast clones only a pointer.
@@ -161,13 +100,8 @@ impl Link {
         data_tx: tokio::sync::broadcast::Sender<Arc<LinkDataEventData>>,
     ) -> Result<Self, RnsError> {
         Ok(Self {
-            id: AddressHash::new_empty(),
-            destination,
-            state: LinkState::Pending {
-                priv_identity: PrivateIdentity::try_new_from_rand(SysRng)?,
-            },
+            core: LinkCore::new_outgoing(destination, SysRng)?,
             request_time: Instant::now(),
-            rtt: Duration::from_secs(0),
             event_tx,
             data_tx,
         })
@@ -175,416 +109,102 @@ impl Link {
 
     pub fn new_from_request(
         packet: &Packet,
-        signing_key: SigningKey,
+        signing_key: ed25519_dalek::SigningKey,
         destination: DestinationDesc,
         event_tx: tokio::sync::broadcast::Sender<LinkEventData>,
         data_tx: tokio::sync::broadcast::Sender<Arc<LinkDataEventData>>,
     ) -> Result<Self, RnsError> {
-        if packet.data.len() < PUBLIC_KEY_LENGTH * 2 {
-            return Err(RnsError::InvalidArgument);
-        }
-
-        let peer_identity = Identity::new_from_slices(
-            &packet.data.as_slice()[..PUBLIC_KEY_LENGTH],
-            &packet.data.as_slice()[PUBLIC_KEY_LENGTH..PUBLIC_KEY_LENGTH * 2],
-        )
-        .map_err(|_| RnsError::CryptoError)?;
-
-        let link_id = LinkId::from(packet);
-        log::debug!("link: create from request {}", link_id);
-
-        let mut private_key_bytes = [0u8; PUBLIC_KEY_LENGTH];
-        SysRng
-            .try_fill_bytes(&mut private_key_bytes)
-            .map_err(|_| RnsError::Randomness)?;
-        let priv_identity =
-            PrivateIdentity::new(StaticSecret::from(private_key_bytes), signing_key);
-        let derived_key =
-            priv_identity.derive_key(&peer_identity.public_key, Some(link_id.as_slice()));
-
         Ok(Self {
-            id: link_id,
-            destination,
-            state: LinkState::Active {
-                priv_identity,
-                peer_identity,
-                derived_key,
-            },
+            core: LinkCore::new_incoming(packet, signing_key, destination, SysRng)?,
             request_time: Instant::now(),
-            rtt: Duration::from_secs(0),
             event_tx,
             data_tx,
         })
     }
 
     pub fn request(&mut self) -> Packet {
-        let priv_identity = self
-            .state
-            .priv_identity()
-            .expect("request() called on closed link");
-
-        let mut packet_data = PacketDataBuffer::new();
-        packet_data.safe_write(priv_identity.as_identity().public_key.as_bytes());
-        packet_data.safe_write(priv_identity.as_identity().verifying_key.as_bytes());
-
-        let packet = Packet {
-            header: Header {
-                packet_type: PacketType::LinkRequest,
-                ..Default::default()
-            },
-            ifac: None,
-            destination: self.destination.address_hash,
-            transport: None,
-            context: PacketContext::None,
-            data: packet_data,
-        };
-
-        self.id = LinkId::from(&packet);
         self.request_time = Instant::now();
-
-        packet
+        self.core.request_packet()
     }
 
     pub fn prove(&mut self) -> Result<Packet, RnsError> {
-        log::debug!("link({}): prove", self.id);
-
+        let packet = self.core.prove_packet()?;
         self.post_event(LinkEvent::Activated);
-
-        let priv_identity = self
-            .state
-            .priv_identity()
-            .expect("prove() called on closed link");
-
-        let mut packet_data = PacketDataBuffer::new();
-
-        packet_data.safe_write(self.id.as_slice());
-        packet_data.safe_write(priv_identity.as_identity().public_key.as_bytes());
-        packet_data.safe_write(priv_identity.as_identity().verifying_key.as_bytes());
-
-        let signature = priv_identity.sign(packet_data.as_slice())?;
-
-        packet_data.reset();
-        packet_data.safe_write(&signature.to_bytes()[..]);
-        packet_data.safe_write(priv_identity.as_identity().public_key.as_bytes());
-
-        Ok(Packet {
-            header: Header {
-                packet_type: PacketType::Proof,
-                ..Default::default()
-            },
-            ifac: None,
-            destination: self.id,
-            transport: None,
-            context: PacketContext::LinkRequestProof,
-            data: packet_data,
-        })
-    }
-
-    /// Complete the DH key exchange for outgoing links (proof received from
-    /// remote).  Transitions `Pending → Active` atomically.
-    fn activate(&mut self, peer_identity: Identity) {
-        let old = std::mem::replace(&mut self.state, LinkState::Closed);
-        let priv_identity = match old {
-            LinkState::Pending { priv_identity } => priv_identity,
-            LinkState::Active { priv_identity, .. } => {
-                // Re-activation should not happen, but handle gracefully.
-                log::warn!(
-                    "link({}): activate() called on already-active link",
-                    self.id
-                );
-                priv_identity
-            }
-            LinkState::Closed => {
-                log::error!("link({}): activate() called on closed link", self.id);
-                return;
-            }
-        };
-        let derived_key =
-            priv_identity.derive_key(&peer_identity.public_key, Some(self.id.as_slice()));
-        self.rtt = self.request_time.elapsed();
-        self.state = LinkState::Active {
-            priv_identity,
-            peer_identity,
-            derived_key,
-        };
-    }
-
-    fn handle_data_packet(&mut self, packet: &Packet) -> LinkHandleResult {
-        match packet.context {
-            PacketContext::None => {
-                let mut buffer = [0u8; PACKET_MDU];
-                if let Ok(plain_text) = self.decrypt(packet.data.as_slice(), &mut buffer[..]) {
-                    log::trace!("link({}): data {}B", self.id, plain_text.len());
-                    self.request_time = Instant::now();
-                    self.post_data(DataKind::Data, PacketContext::None, plain_text);
-                } else {
-                    log::error!("link({}): can't decrypt packet", self.id);
-                }
-            }
-            PacketContext::Channel => {
-                let mut buffer = [0u8; PACKET_MDU];
-                if let Ok(plain_text) = self.decrypt(packet.data.as_slice(), &mut buffer[..]) {
-                    log::trace!("link({}): channel data {}B", self.id, plain_text.len());
-                    self.request_time = Instant::now();
-                    self.post_data(DataKind::ChannelData, PacketContext::Channel, plain_text);
-                } else {
-                    log::error!("link({}): can't decrypt channel packet", self.id);
-                }
-            }
-            ctx @ (PacketContext::Resource
-            | PacketContext::ResourceAdvrtisement
-            | PacketContext::ResourceRequest
-            | PacketContext::ResourceHashUpdate
-            | PacketContext::ResourceProof
-            | PacketContext::ResourceInitiatorCancel
-            | PacketContext::ResourceReceiverCancel) => {
-                let mut buffer = [0u8; PACKET_MDU];
-                if let Ok(plain_text) = self.decrypt(packet.data.as_slice(), &mut buffer[..]) {
-                    log::trace!(
-                        "link({}): resource data {}B ctx={:?}",
-                        self.id,
-                        plain_text.len(),
-                        ctx
-                    );
-                    self.request_time = Instant::now();
-                    self.post_data(DataKind::ResourceData, ctx, plain_text);
-                } else {
-                    log::error!("link({}): can't decrypt resource packet", self.id);
-                }
-            }
-            PacketContext::KeepAlive => {
-                if !packet.data.is_empty() && packet.data.as_slice()[0] == 0xFF {
-                    self.request_time = Instant::now();
-                    log::trace!("link({}): keep-alive request", self.id);
-                    return LinkHandleResult::KeepAlive;
-                }
-                if !packet.data.is_empty() && packet.data.as_slice()[0] == 0xFE {
-                    log::trace!("link({}): keep-alive response", self.id);
-                    self.request_time = Instant::now();
-                    return LinkHandleResult::None;
-                }
-            }
-            _ => {}
-        }
-
-        LinkHandleResult::None
+        Ok(packet)
     }
 
     pub fn handle_packet(&mut self, packet: &Packet) -> LinkHandleResult {
-        if packet.destination != self.id {
-            return LinkHandleResult::None;
-        }
+        let elapsed_ms = self.request_time.elapsed().as_millis() as u32;
 
-        match packet.header.packet_type {
-            PacketType::Data => return self.handle_data_packet(packet),
-            PacketType::Proof => {
-                if self.state.status() == LinkStatus::Pending
-                    && packet.context == PacketContext::LinkRequestProof
-                {
-                    match LinkHandshake::new(self.id).validate_proof(
-                        packet.data.as_slice(),
-                        &self.destination.identity.verifying_key,
-                    ) {
-                        Ok(proved) => {
-                            log::debug!("link({}): has been proved", self.id);
-                            self.activate(proved.into_peer_identity());
-                            log::debug!("link({}): activated", self.id);
-                            self.post_event(LinkEvent::Activated);
-                            return LinkHandleResult::Activated;
-                        }
-                        Err(_) => {
-                            log::warn!("link({}): proof is not valid", self.id);
-                        }
-                    }
-                }
+        match self.core.handle_packet(SysRng, packet) {
+            LinkOutcome::Activated => {
+                self.core.set_rtt_ms(elapsed_ms.max(25));
+                self.request_time = Instant::now();
+                log::debug!("link({}): proved and activated", self.core.id());
+                self.post_event(LinkEvent::Activated);
+                LinkHandleResult::Activated
             }
-            _ => {}
+            LinkOutcome::DataReceived(frame) => {
+                self.request_time = Instant::now();
+                self.post_data_frame(frame);
+                LinkHandleResult::None
+            }
+            LinkOutcome::KeepAlive => {
+                self.request_time = Instant::now();
+                LinkHandleResult::KeepAlive
+            }
+            LinkOutcome::None => LinkHandleResult::None,
         }
-
-        LinkHandleResult::None
     }
 
-    /// Build a data packet, encrypting `data` with the link's derived key.
-    /// Returns `Err(InvalidArgument)` if the link is not yet active.
     pub fn data_packet(&self, data: &[u8]) -> Result<Packet, RnsError> {
-        let LinkState::Active {
-            priv_identity,
-            derived_key,
-            ..
-        } = &self.state
-        else {
-            return Err(RnsError::InvalidArgument);
-        };
-
-        let mut packet_data = PacketDataBuffer::new();
-        let cipher_text_len = {
-            let cipher_text =
-                priv_identity.encrypt(SysRng, data, derived_key, packet_data.acquire_buf_max())?;
-            cipher_text.len()
-        };
-        packet_data.resize(cipher_text_len);
-
-        Ok(Packet {
-            header: Header {
-                destination_type: DestinationType::Link,
-                packet_type: PacketType::Data,
-                ..Default::default()
-            },
-            ifac: None,
-            destination: self.id,
-            transport: None,
-            context: PacketContext::None,
-            data: packet_data,
-        })
+        self.core.data_packet(SysRng, data)
     }
 
     pub fn channel_packet(&self, data: &[u8]) -> Result<Packet, RnsError> {
-        let LinkState::Active {
-            priv_identity,
-            derived_key,
-            ..
-        } = &self.state
-        else {
-            return Err(RnsError::InvalidArgument);
-        };
-
-        let mut packet_data = PacketDataBuffer::new();
-        let cipher_text_len = {
-            let cipher_text =
-                priv_identity.encrypt(SysRng, data, derived_key, packet_data.acquire_buf_max())?;
-            cipher_text.len()
-        };
-        packet_data.resize(cipher_text_len);
-
-        Ok(Packet {
-            header: Header {
-                destination_type: DestinationType::Link,
-                packet_type: PacketType::Data,
-                ..Default::default()
-            },
-            ifac: None,
-            destination: self.id,
-            transport: None,
-            context: PacketContext::Channel,
-            data: packet_data,
-        })
+        self.core.channel_packet(SysRng, data)
     }
 
     pub fn resource_packet(&self, data: &[u8], context: PacketContext) -> Result<Packet, RnsError> {
-        let LinkState::Active {
-            priv_identity,
-            derived_key,
-            ..
-        } = &self.state
-        else {
-            return Err(RnsError::InvalidArgument);
-        };
-
-        let mut packet_data = PacketDataBuffer::new();
-        let cipher_text_len = {
-            let cipher_text =
-                priv_identity.encrypt(SysRng, data, derived_key, packet_data.acquire_buf_max())?;
-            cipher_text.len()
-        };
-        packet_data.resize(cipher_text_len);
-
-        Ok(Packet {
-            header: Header {
-                destination_type: DestinationType::Link,
-                packet_type: PacketType::Data,
-                ..Default::default()
-            },
-            ifac: None,
-            destination: self.id,
-            transport: None,
-            context,
-            data: packet_data,
-        })
+        self.core.resource_packet(SysRng, data, context)
     }
 
     pub fn keep_alive_packet(&self, data: u8) -> Packet {
-        log::trace!("link({}): create keep alive {}", self.id, data);
-
-        let mut packet_data = PacketDataBuffer::new();
-        packet_data.safe_write(&[data]);
-
-        Packet {
-            header: Header {
-                destination_type: DestinationType::Link,
-                packet_type: PacketType::Data,
-                ..Default::default()
-            },
-            ifac: None,
-            destination: self.id,
-            transport: None,
-            context: PacketContext::KeepAlive,
-            data: packet_data,
-        }
+        self.core.keep_alive_packet(data)
     }
 
     pub fn encrypt<'a>(&self, text: &[u8], out_buf: &'a mut [u8]) -> Result<&'a [u8], RnsError> {
-        let LinkState::Active {
-            priv_identity,
-            derived_key,
-            ..
-        } = &self.state
-        else {
-            return Err(RnsError::InvalidArgument);
-        };
-        priv_identity.encrypt(SysRng, text, derived_key, out_buf)
+        self.core.encrypt(SysRng, text, out_buf)
     }
 
     pub fn decrypt<'a>(&self, text: &[u8], out_buf: &'a mut [u8]) -> Result<&'a [u8], RnsError> {
-        let LinkState::Active {
-            priv_identity,
-            derived_key,
-            ..
-        } = &self.state
-        else {
-            return Err(RnsError::InvalidArgument);
-        };
-        priv_identity.decrypt(SysRng, text, derived_key, out_buf)
-    }
-
-    pub fn destination(&self) -> &DestinationDesc {
-        &self.destination
+        self.core.decrypt(SysRng, text, out_buf)
     }
 
     pub fn create_rtt(&self) -> Result<Packet, RnsError> {
-        let LinkState::Active {
-            priv_identity,
-            derived_key,
-            ..
-        } = &self.state
-        else {
-            return Err(RnsError::InvalidArgument);
-        };
-
-        let rtt = self.rtt.as_secs_f32();
+        let rtt = self.core.rtt_ms() as f32 / 1000.0;
         let mut buf = Vec::with_capacity(4);
         rmp::encode::write_f32(&mut buf, rtt).unwrap();
 
         let mut packet_data = PacketDataBuffer::new();
         let token_len = {
-            let token = priv_identity.encrypt(
-                SysRng,
-                buf.as_slice(),
-                derived_key,
-                packet_data.acquire_buf_max(),
-            )?;
+            let token = self
+                .core
+                .encrypt(SysRng, buf.as_slice(), packet_data.acquire_buf_max())?;
             token.len()
         };
         packet_data.resize(token_len);
 
-        log::trace!("link: {} create rtt packet = {} sec", self.id, rtt);
+        log::trace!("link: {} create rtt packet = {} sec", self.core.id(), rtt);
 
+        use reticulum_core::packet::{DestinationType, Header};
         Ok(Packet {
             header: Header {
                 destination_type: DestinationType::Link,
                 ..Default::default()
             },
             ifac: None,
-            destination: self.id,
+            destination: *self.core.id(),
             transport: None,
             context: PacketContext::LinkRTT,
             data: packet_data,
@@ -593,53 +213,32 @@ impl Link {
 
     fn post_event(&self, event: LinkEvent) {
         let _ = self.event_tx.send(LinkEventData {
-            id: self.id,
-            address_hash: self.destination.address_hash,
+            id: *self.core.id(),
+            address_hash: self.core.destination().address_hash,
             event,
         });
     }
 
-    fn post_data(&self, kind: DataKind, context: PacketContext, plain_text: &[u8]) {
+    fn post_data_frame(&self, frame: LinkDataFrame) {
         let _ = self.data_tx.send(Arc::new(LinkDataEventData {
-            id: self.id,
-            address_hash: self.destination.address_hash,
-            frame: LinkDataFrame {
-                kind,
-                context,
-                payload: LinkPayload::new_from_slice(plain_text),
-            },
+            id: *self.core.id(),
+            address_hash: self.core.destination().address_hash,
+            frame,
         }));
     }
 
     pub fn close(&mut self) {
-        self.state = LinkState::Closed;
+        self.core.close();
         self.post_event(LinkEvent::Closed);
-        log::warn!("link: close {}", self.id);
     }
 
-    /// Restart the link: drop the derived key material and revert to Pending,
-    /// keeping the same private identity so the link ID can be reused.
     pub fn restart(&mut self) {
         log::warn!(
             "link({}): restart after {}s",
-            self.id,
+            self.core.id(),
             self.request_time.elapsed().as_secs()
         );
-
-        let old = std::mem::replace(&mut self.state, LinkState::Closed);
-        let priv_identity = match old {
-            LinkState::Active { priv_identity, .. } | LinkState::Pending { priv_identity } => {
-                priv_identity
-            }
-            LinkState::Closed => match PrivateIdentity::try_new_from_rand(SysRng) {
-                Ok(identity) => identity,
-                Err(_) => {
-                    log::error!("link({}): restart failed: RNG unavailable", self.id);
-                    return;
-                }
-            },
-        };
-        self.state = LinkState::Pending { priv_identity };
+        self.core.restart(SysRng);
     }
 
     pub fn elapsed(&self) -> Duration {
@@ -647,15 +246,19 @@ impl Link {
     }
 
     pub fn status(&self) -> LinkStatus {
-        self.state.status()
+        self.core.status()
     }
 
     pub fn id(&self) -> &LinkId {
-        &self.id
+        self.core.id()
     }
 
     pub fn rtt_ms(&self) -> u32 {
-        (self.rtt.as_millis() as u32).max(25)
+        self.core.rtt_ms()
+    }
+
+    pub fn destination(&self) -> &DestinationDesc {
+        self.core.destination()
     }
 }
 
@@ -666,8 +269,8 @@ mod tests {
     use super::*;
     use reticulum_core::destination::DestinationName;
     use reticulum_core::destination::SingleInputDestination;
-    use reticulum_core::hash::AddressHash;
     use reticulum_core::identity::PrivateIdentity;
+    use reticulum_core::packet::{Header, PacketType};
     use tokio::sync::broadcast;
 
     fn make_link() -> Link {
@@ -715,7 +318,6 @@ mod tests {
         let mut link = make_link();
         link.close();
         link.restart();
-        // restart from Closed uses a freshly generated key
         assert_eq!(link.status(), LinkStatus::Pending);
     }
 
@@ -724,13 +326,11 @@ mod tests {
         let (event_tx, _) = broadcast::channel(4);
         let (data_tx, _) = broadcast::channel(4);
 
-        // Build a fake link-request packet (two x25519 public keys).
         let requester_id = PrivateIdentity::try_new_from_rand(SysRng).expect("system RNG");
         let responder_id = PrivateIdentity::try_new_from_rand(SysRng).expect("system RNG");
         let responder_dest =
             SingleInputDestination::new(responder_id, DestinationName::new("test", "link"));
 
-        // Build a packet that looks like a link request.
         let mut packet_data = PacketDataBuffer::new();
         packet_data.safe_write(requester_id.as_identity().public_key.as_bytes());
         packet_data.safe_write(requester_id.as_identity().verifying_key.as_bytes());

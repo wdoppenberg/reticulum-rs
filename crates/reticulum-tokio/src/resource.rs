@@ -10,7 +10,7 @@
 //! // tokio::spawn(send_resource(data, link, transport, event_rx, cancel));
 //! ```
 //!
-//! **Receiver** side – listen for `LinkEvent::ResourceData(_, ResourceAdvrtisement)`,
+//! **Receiver** side – listen for `LinkEvent::ResourceData(_, ResourceAdvertisement)`,
 //! then create and drive a [`ResourceReceiver`]:
 //! ```no_run
 //! // let rx = ResourceReceiver::new(adv_bytes, link, transport, cancel).await?;
@@ -110,7 +110,7 @@ pub async fn send_resource(
     let adv_packet = link
         .lock()
         .await
-        .resource_packet(&adv_bytes, PacketContext::ResourceAdvrtisement)
+        .resource_packet(&adv_bytes, PacketContext::ResourceAdvertisement)
         .map_err(|e| ResourceError::Advertisement(format!("{:?}", e)))?;
 
     transport.send_packet(adv_packet).await;
@@ -314,7 +314,7 @@ async fn send_resource_packet(
 /// Drives a resource transfer from the receiving side.
 ///
 /// Create from an incoming advertisement payload obtained via
-/// `LinkEvent::ResourceData(payload, PacketContext::ResourceAdvrtisement)`,
+/// `LinkEvent::ResourceData(payload, PacketContext::ResourceAdvertisement)`,
 /// then call [`wait`](ResourceReceiver::wait) to drive the protocol to
 /// completion and obtain the assembled data.
 pub struct ResourceReceiver {

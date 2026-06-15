@@ -270,10 +270,8 @@ impl App {
             11 => {
                 r.instance_control_port = r.instance_control_port.wrapping_add(1);
             }
-            12 => {
-                if l.loglevel < 7 {
-                    l.loglevel += 1;
-                }
+            12 if l.loglevel < 7 => {
+                l.loglevel += 1;
             }
             _ => {}
         }
@@ -291,10 +289,8 @@ impl App {
             11 => {
                 r.instance_control_port = r.instance_control_port.saturating_sub(1);
             }
-            12 => {
-                if l.loglevel > 0 {
-                    l.loglevel -= 1;
-                }
+            12 if l.loglevel > 0 => {
+                l.loglevel -= 1;
             }
             _ => {}
         }

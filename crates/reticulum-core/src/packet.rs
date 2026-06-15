@@ -9,7 +9,12 @@ use crate::hash::Hash;
 
 pub use crate::identity::PUBLIC_KEY_LENGTH;
 
-pub const PACKET_MDU: usize = 2048usize;
+/// Maximum payload bytes carried inside a single [`Packet`].
+///
+/// Sized to fit one wire frame at [`RETICULUM_MTU`].  Keeping this small is
+/// important on embedded targets: every `Packet` value carries an inline
+/// [`PacketDataBuffer`] of this size on the stack.
+pub const PACKET_MDU: usize = 512usize;
 pub const PACKET_IFAC_MAX_LENGTH: usize = 64usize;
 pub const RETICULUM_MTU: usize = 500usize;
 
@@ -19,12 +24,13 @@ pub enum IfacFlag {
     Authenticated = 0b1,
 }
 
-impl From<u8> for IfacFlag {
-    fn from(value: u8) -> Self {
+impl TryFrom<u8> for IfacFlag {
+    type Error = RnsError;
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
-            0 => IfacFlag::Open,
-            1 => IfacFlag::Authenticated,
-            _ => IfacFlag::Open,
+            0 => Ok(IfacFlag::Open),
+            1 => Ok(IfacFlag::Authenticated),
+            _ => Err(RnsError::PacketError),
         }
     }
 }
@@ -35,32 +41,35 @@ pub enum HeaderType {
     Type2 = 0b1,
 }
 
-impl From<u8> for HeaderType {
-    fn from(value: u8) -> Self {
-        match value & 0b1 {
-            0 => HeaderType::Type1,
-            1 => HeaderType::Type2,
-            _ => HeaderType::Type1,
+impl TryFrom<u8> for HeaderType {
+    type Error = RnsError;
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(HeaderType::Type1),
+            1 => Ok(HeaderType::Type2),
+            _ => Err(RnsError::PacketError),
         }
     }
 }
 
+/// Packet propagation mode.
+///
+/// The wire encoding uses 2 bits; values `0b10` and `0b11` are reserved by
+/// the Reticulum specification and rejected by [`TryFrom<u8>`].
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub enum PropagationType {
     Broadcast = 0b00,
     Transport = 0b01,
-    Reserved1 = 0b10,
-    Reserved2 = 0b11,
 }
 
-impl From<u8> for PropagationType {
-    fn from(value: u8) -> Self {
-        match value & 0b11 {
-            0b00 => PropagationType::Broadcast,
-            0b01 => PropagationType::Transport,
-            0b10 => PropagationType::Reserved1,
-            0b11 => PropagationType::Reserved2,
-            _ => PropagationType::Broadcast,
+impl TryFrom<u8> for PropagationType {
+    type Error = RnsError;
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0b00 => Ok(PropagationType::Broadcast),
+            0b01 => Ok(PropagationType::Transport),
+            // 0b10 and 0b11 are reserved by spec — reject on the wire.
+            _ => Err(RnsError::PacketError),
         }
     }
 }
@@ -73,14 +82,15 @@ pub enum DestinationType {
     Link = 0b11,
 }
 
-impl From<u8> for DestinationType {
-    fn from(value: u8) -> Self {
-        match value & 0b11 {
-            0b00 => DestinationType::Single,
-            0b01 => DestinationType::Group,
-            0b10 => DestinationType::Plain,
-            0b11 => DestinationType::Link,
-            _ => DestinationType::Single,
+impl TryFrom<u8> for DestinationType {
+    type Error = RnsError;
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0b00 => Ok(DestinationType::Single),
+            0b01 => Ok(DestinationType::Group),
+            0b10 => Ok(DestinationType::Plain),
+            0b11 => Ok(DestinationType::Link),
+            _ => Err(RnsError::PacketError),
         }
     }
 }
@@ -93,14 +103,15 @@ pub enum PacketType {
     Proof = 0b11,
 }
 
-impl From<u8> for PacketType {
-    fn from(value: u8) -> Self {
-        match value & 0b11 {
-            0b00 => PacketType::Data,
-            0b01 => PacketType::Announce,
-            0b10 => PacketType::LinkRequest,
-            0b11 => PacketType::Proof,
-            _ => PacketType::Data,
+impl TryFrom<u8> for PacketType {
+    type Error = RnsError;
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0b00 => Ok(PacketType::Data),
+            0b01 => Ok(PacketType::Announce),
+            0b10 => Ok(PacketType::LinkRequest),
+            0b11 => Ok(PacketType::Proof),
+            _ => Err(RnsError::PacketError),
         }
     }
 }
@@ -109,7 +120,7 @@ impl From<u8> for PacketType {
 pub enum PacketContext {
     None = 0x00,                    // Generic data packet
     Resource = 0x01,                // Packet is part of a resource
-    ResourceAdvrtisement = 0x02,    // Packet is a resource advertisement
+    ResourceAdvertisement = 0x02,   // Packet is a resource advertisement
     ResourceRequest = 0x03,         // Packet is a resource part request
     ResourceHashUpdate = 0x04,      // Packet is a resource hashmap update
     ResourceProof = 0x05,           // Packet is a resource proof
@@ -130,30 +141,32 @@ pub enum PacketContext {
     LinkRequestProof = 0xFF,        // Packet is a link request proof
 }
 
-impl From<u8> for PacketContext {
-    fn from(value: u8) -> Self {
+impl TryFrom<u8> for PacketContext {
+    type Error = RnsError;
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
-            0x01 => PacketContext::Resource,
-            0x02 => PacketContext::ResourceAdvrtisement,
-            0x03 => PacketContext::ResourceRequest,
-            0x04 => PacketContext::ResourceHashUpdate,
-            0x05 => PacketContext::ResourceProof,
-            0x06 => PacketContext::ResourceInitiatorCancel,
-            0x07 => PacketContext::ResourceReceiverCancel,
-            0x08 => PacketContext::CacheRequest,
-            0x09 => PacketContext::Request,
-            0x0A => PacketContext::Response,
-            0x0B => PacketContext::PathResponse,
-            0x0C => PacketContext::Command,
-            0x0D => PacketContext::CommandStatus,
-            0x0E => PacketContext::Channel,
-            0xFA => PacketContext::KeepAlive,
-            0xFB => PacketContext::LinkIdentify,
-            0xFC => PacketContext::LinkClose,
-            0xFD => PacketContext::LinkProof,
-            0xFE => PacketContext::LinkRTT,
-            0xFF => PacketContext::LinkRequestProof,
-            _ => PacketContext::None,
+            0x00 => Ok(PacketContext::None),
+            0x01 => Ok(PacketContext::Resource),
+            0x02 => Ok(PacketContext::ResourceAdvertisement),
+            0x03 => Ok(PacketContext::ResourceRequest),
+            0x04 => Ok(PacketContext::ResourceHashUpdate),
+            0x05 => Ok(PacketContext::ResourceProof),
+            0x06 => Ok(PacketContext::ResourceInitiatorCancel),
+            0x07 => Ok(PacketContext::ResourceReceiverCancel),
+            0x08 => Ok(PacketContext::CacheRequest),
+            0x09 => Ok(PacketContext::Request),
+            0x0A => Ok(PacketContext::Response),
+            0x0B => Ok(PacketContext::PathResponse),
+            0x0C => Ok(PacketContext::Command),
+            0x0D => Ok(PacketContext::CommandStatus),
+            0x0E => Ok(PacketContext::Channel),
+            0xFA => Ok(PacketContext::KeepAlive),
+            0xFB => Ok(PacketContext::LinkIdentify),
+            0xFC => Ok(PacketContext::LinkClose),
+            0xFD => Ok(PacketContext::LinkProof),
+            0xFE => Ok(PacketContext::LinkRTT),
+            0xFF => Ok(PacketContext::LinkRequestProof),
+            _ => Err(RnsError::PacketError),
         }
     }
 }
@@ -191,15 +204,20 @@ impl Header {
             | (self.packet_type as u8)
     }
 
-    pub fn from_meta(meta: u8) -> Self {
-        Self {
-            ifac_flag: IfacFlag::from(meta >> 7),
-            header_type: HeaderType::from(meta >> 6),
-            propagation_type: PropagationType::from(meta >> 4),
-            destination_type: DestinationType::from(meta >> 2),
-            packet_type: PacketType::from(meta),
+    /// Parse a wire-format header meta byte.
+    ///
+    /// Returns [`RnsError::PacketError`] if any of the bit fields decode to a
+    /// reserved or otherwise invalid value (e.g. reserved propagation modes
+    /// `0b10`/`0b11`).
+    pub fn try_from_meta(meta: u8) -> Result<Self, RnsError> {
+        Ok(Self {
+            ifac_flag: IfacFlag::try_from((meta >> 7) & 0b1)?,
+            header_type: HeaderType::try_from((meta >> 6) & 0b1)?,
+            propagation_type: PropagationType::try_from((meta >> 4) & 0b11)?,
+            destination_type: DestinationType::try_from((meta >> 2) & 0b11)?,
+            packet_type: PacketType::try_from(meta & 0b11)?,
             hops: 0,
-        }
+        })
     }
 }
 
@@ -270,6 +288,22 @@ pub struct Packet {
 }
 
 impl Packet {
+    /// An empty placeholder packet — broadcast Data with no destination set.
+    ///
+    /// Intended for unit tests, ring-buffer slots, and other "fill me in
+    /// later" scenarios.  Production code should construct packets with the
+    /// destination, header, and data fields set explicitly.
+    pub fn new_empty() -> Self {
+        Self {
+            header: Header::default(),
+            ifac: None,
+            destination: AddressHash::new_empty(),
+            transport: None,
+            context: PacketContext::None,
+            data: PacketDataBuffer::new(),
+        }
+    }
+
     pub fn wire_size_hint(&self) -> Result<usize, RnsError> {
         let mut size = 2usize; // header meta + hops
 
@@ -304,19 +338,6 @@ impl Packet {
                 .finalize()
                 .into(),
         )
-    }
-}
-
-impl Default for Packet {
-    fn default() -> Self {
-        Self {
-            header: Default::default(),
-            destination: AddressHash::new_empty(),
-            data: Default::default(),
-            ifac: None,
-            transport: None,
-            context: crate::packet::PacketContext::None,
-        }
     }
 }
 

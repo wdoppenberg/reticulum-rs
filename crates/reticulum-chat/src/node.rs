@@ -812,7 +812,7 @@ mod tests {
         let peer_hash = *peer_identity.address_hash();
         let peer_desc = reticulum_core::destination::DestinationDesc {
             name: reticulum_core::destination::DestinationName::new(APP_NAME, APP_ASPECTS),
-            identity: peer_identity.as_identity().clone(),
+            identity: *peer_identity.as_identity(),
             address_hash: peer_hash,
         };
 

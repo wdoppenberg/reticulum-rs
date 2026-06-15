@@ -38,7 +38,7 @@ async fn main() {
     let identity = PrivateIdentity::new_from_name(&mode);
     let node_address = *identity.address_hash();
 
-    let mut transport = Transport::new(TransportConfig::new(&mode, node_address, true));
+    let transport = Transport::new(TransportConfig::new(&mode, node_address, true));
 
     match mode.as_str() {
         "server" => {

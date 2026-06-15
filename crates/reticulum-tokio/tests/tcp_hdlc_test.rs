@@ -68,7 +68,7 @@ async fn packet_overload() {
                     },
                     _ = tokio::time::sleep(std::time::Duration::from_micros(1)) => {
 
-                        let mut packet = Packet::default();
+                        let mut packet = Packet::new_empty();
 
                         packet.data.resize(payload_size);
 
